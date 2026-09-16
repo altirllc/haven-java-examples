@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <!-- Same parent, same Java, same plugin setup as scaffold/java/agent. A probe
+       that ran on a different stack than the apps it vouches for would prove
+       nothing about them. -->
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>4.1.0</version>
+    <relativePath/>
+  </parent>
+
+  <groupId>haven.plumb</groupId>
+  <artifactId>plumb</artifactId>
+  <version>1.0.0</version>
+
+  <!-- ONE module, deliberately. The agent scaffold splits into eight because a
+       Temporal determinism fence needs a module graph to enforce it; plumb's
+       one workflow is a two-line echo and its whole job is to be the simplest
+       thing that can prove the platform contract. -->
+
+  <properties>
+    <java.version>25</java.version>
+    <run.profiles>local</run.profiles>
+    <temporal.version>1.37.0</temporal.version>
+    <awssdk.version>2.48.1</awssdk.version>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>software.amazon.awssdk</groupId>
+        <artifactId>bom</artifactId>
+        <version>${awssdk.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>io.temporal</groupId>
+        <artifactId>temporal-sdk</artifactId>
+        <version>${temporal.version}</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-actuator</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-registry-prometheus</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-validation</artifactId>
+    </dependency>
+
+    <!-- Seam clients. Drivers ONLY — no spring-boot-starter-data-* anywhere.
+         Those starters autoconfigure a connection at boot, and a probe that
+         cannot start when a seam is down is not a probe. Every client here is
+         built lazily, inside the probe that owns it. -->
+    <dependency>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.liquibase</groupId>
+      <artifactId>liquibase-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.mongodb</groupId>
+      <artifactId>mongodb-driver-sync</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>s3</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.temporal</groupId>
+      <artifactId>temporal-sdk</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+        <executions>
+          <execution>
+            <goals>
+              <goal>repackage</goal>
+            </goals>
+          </execution>
+        </executions>
+        <configuration>
+          <environmentVariables>
+            <SPRING_PROFILES_ACTIVE>${run.profiles}</SPRING_PROFILES_ACTIVE>
+          </environmentVariables>
+          <!-- netty (via Temporal's gRPC) trips the JDK's Unsafe and
+               native-access warnings on every boot; these are the JDK's own
+               opt-ins. ansi: run pipes stdout through Maven, so Boot cannot
+               detect the terminal. -->
+          <jvmArguments>--enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow -Dspring.output.ansi.enabled=ALWAYS</jvmArguments>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

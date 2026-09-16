@@ -1,0 +1,668 @@
+# loom's stack: what a tenant vCluster gives the app, plus Dispatch.
+#
+# Two halves. The top one is the platform every Haven app gets — Postgres (with
+# pgvector), MongoDB, Temporal, SeaweedFS. The bottom one is the Dispatch stack,
+# the foundation events platform loom notifies through: the BROKER moves
+# messages, EVENTS-API runs the Esper rule engine over them, and NOTIFICATIONS
+# subscribes to the topics events-api reroutes into and delivers what arrives.
+# Its env is modelled on haven-catalog/bundles/dispatch, which is what a tenant
+# actually gets.
+#
+# Note the repository names: the live line is `events-api` and
+# `fn-events-broker`. `fn-events` and `events-gateway` are frozen snapshots of
+# the pre-2.x product — do not resurrect those images.
+#
+# Tags are `latest`, not `develop`. The publish workflows for events-api and
+# events-broker emit only v<version>, sha-<sha> and latest, so the `:develop`
+# in events-api/docker/compose/docker-compose.yml cannot be pulled at all —
+# that file is stale.
+#
+# Dispatch runs in DEFAULT-TENANT mode (tenant id `default`), the same
+# single-tenant appliance shape the dispatch bundle deploys.
+#
+# Two ways to run it:
+#
+#   docker compose up -d                    the backing services only.
+#                                           Run loom from the IDE against them.
+#   docker compose --profile demo up -d     the whole story, including Anvil and
+#                                           loom themselves. Needs a model
+#                                           provider key - see .env.example.
+#
+# Every published port is overridable, because the stack does not always run on
+# the same machine as the JVM. Copy .env.example to .env and remap. One MongoDB
+# serves both halves — a tenant has one, and two would confuse
+# spring-boot-docker-compose, which derives the app's connection from the
+# compose service.
+
+name: loom
+
+services:
+  postgres:
+    # pgvector's image, not plain postgres: the tenant's Postgres ships the
+    # extension and the agent's semantic memory needs it.
+    image: pgvector/pgvector:pg17
+    ports:
+      - "${LOOM_POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: haven
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    configs:
+      - source: postgres-init
+        target: /docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d haven"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  mongodb:
+    image: mongo:8.0
+    ports:
+      - "${LOOM_MONGO_PORT:-27017}:27017"
+    environment:
+      # spring-boot-docker-compose derives the app's Mongo connection from this
+      # service, and this env var is where it reads the database name. The
+      # Dispatch services address their own databases explicitly instead.
+      MONGO_INITDB_DATABASE: loom
+    volumes:
+      - mongodb-data:/data/db
+      # mongo's image declares /data/configdb as a volume too; naming it stops
+      # docker minting a fresh anonymous volume on every container recreate.
+      - mongodb-config:/data/configdb
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  temporal:
+    image: temporalio/auto-setup:latest
+    ports:
+      - "${LOOM_TEMPORAL_PORT:-7233}:7233"
+    environment:
+      DB: postgres12
+      DB_PORT: "5432"
+      POSTGRES_USER: postgres
+      POSTGRES_PWD: postgres
+      POSTGRES_SEEDS: postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  temporal-ui:
+    image: temporalio/ui:latest
+    ports:
+      - "${LOOM_TEMPORAL_UI_PORT:-8080}:8080"
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+    depends_on:
+      - temporal
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:latest
+    ports:
+      - "${LOOM_S3_PORT:-8333}:8333"
+    command: "server -s3 -s3.config=/etc/seaweedfs/s3.json -s3.allowEmptyFolder=true"
+    configs:
+      - source: s3-config
+        target: /etc/seaweedfs/s3.json
+    volumes:
+      - seaweedfs-data:/data
+
+  # The tenant bucket is created during provisioning, never by an app. Speaks to
+  # the FILER through `weed shell`, not to the S3 endpoint: the gateway is
+  # configured with credentialled identities and denies anonymous requests, so an
+  # unsigned `curl -X PUT /bucket` gets a 403 — and curl without -f exits 0 on a
+  # 403, which is how an init that silently did nothing still reports success.
+  seaweedfs-init:
+    image: chrislusf/seaweedfs:latest
+    depends_on:
+      - seaweedfs
+    entrypoint:
+      - sh
+      - -c
+      - |
+        for i in $$(seq 1 60); do
+          echo "s3.bucket.create -name ${LOOM_BUCKET:-haven-local}" | weed shell -master=seaweedfs:9333 >/dev/null 2>&1
+          if echo "s3.bucket.list" | weed shell -master=seaweedfs:9333 2>/dev/null | grep -q "${LOOM_BUCKET:-haven-local}"; then
+            echo "bucket ${LOOM_BUCKET:-haven-local} ready"; exit 0
+          fi
+          sleep 2
+        done
+        echo "seaweedfs did not come up"; exit 1
+    restart: "no"
+
+  # ---------------------------------------------------------------- Dispatch
+
+  broker:
+    image: ghcr.io/altirllc/fn-events-broker:${BROKER_TAG:-latest}
+    ports:
+      - "${LOOM_BROKER_PORT:-8001}:8001"
+    environment:
+      SERVER_PORT: 8001
+      MONGODB_URI: mongodb://mongodb:27017/messages
+      JAVA_OPTS: "-XX:MaxRAMPercentage=75"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider --timeout=5 http://127.0.0.1:8001/broker/health || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+
+  events:
+    image: ghcr.io/altirllc/events-api:${EVENTS_TAG:-latest}
+    ports:
+      # 8008, not 8080: temporal-ui already defaults to 8080 on the host, and
+      # two services claiming one port makes `docker compose up` fail outright
+      # for anyone who has not copied .env.example.
+      - "${LOOM_EVENTS_PORT:-8008}:8080"
+    environment:
+      APP_PORT: 8080
+      EVENTS_BROKER_BASE_URL: http://broker:8001
+      STORAGE_PROVIDERS: MONGO
+      STORAGE_MONGO_URI: mongodb://mongodb:27017/events
+      # Subscribe keys for the internal config and sync topics.
+      EVENTS_CONFIG_SECRET_KEY: ${EVENTS_CONFIG_SECRET_KEY:-dev-config-key-change-me}
+      EVENTS_SYNC_SECRET_KEY: ${EVENTS_SYNC_SECRET_KEY:-dev-sync-key-change-me}
+      # MANDATORY and easy to miss: altir.events.multitenancy.sync-key is
+      # @NotBlank with a 10-character minimum and the service refuses to start
+      # without it. It appears in neither events-api's own dev compose nor
+      # visibly in the dispatch bundle — there it arrives inside the
+      # `tenant-events-secret` envFrom, so a local stack has to supply it.
+      TENANCY_SYNC_KEY: ${TENANCY_SYNC_KEY:-loom-local-sync-key}
+      TENANT_MGMT_SECRET: ${TENANT_MGMT_SECRET:-dev-tenant-secret-change-me}
+      # No central tenant registry: each tenant runs its own stack, so there is
+      # no fan-out for one to coordinate.
+      TENANT_MGMT_ENABLED: "false"
+      DEFAULT_TENANT_ENABLED: "true"
+      DEFAULT_TENANT_ID: default
+      # The AI rules agent is off: it needs an Anthropic key and Redis eagerly at
+      # startup, and loom writes its own rules.
+      AGENT_ENABLED: "false"
+      REDIS_HOST: valkey
+      JAVA_OPTS: "-XX:MaxRAMPercentage=75"
+    depends_on:
+      broker:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider --timeout=5 http://127.0.0.1:8080/events/health || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 90s
+
+  notifications:
+    image: ghcr.io/altirllc/fn-notifications:${NOTIFICATIONS_TAG:-latest}
+    ports:
+      - "${LOOM_NOTIFICATIONS_PORT:-8089}:8089"
+    environment:
+      APP_PORT: 8089
+      SERVER_SERVLET_CONTEXT_PATH: /notifications
+      MANAGEMENT_HEALTH_ELASTICSEARCH_ENABLED: "false"
+      MANAGEMENT_HEALTH_MONGO_ENABLED: "true"
+      # Mongo, not Postgres — the same choice the dispatch bundle makes. Note the
+      # seed data differs between the two stores (ADR-0001): Liquibase is
+      # disabled entirely under mongo, so the bundled CREATE_RULE CSV is never
+      # loaded and the bootstrap rule has to be inserted as a document, in
+      # camelCase. See L0-FINDINGS.md — without it the tenant cannot accept a
+      # single rule.
+      RECORDS_STORE: mongo
+      RECORDS_MONGO_URI: mongodb://mongodb:27017/notifications
+      # Literal values lifted from the service's own application-local.yaml
+      # rather than invented: these are base64 keys of a specific length and a
+      # wrong guess fails at startup in a way that reads like something else.
+      ADMIN_PASSWORD: ${NOTIFICATIONS_ADMIN_PASSWORD:-1111}
+      ACCESS_TOKEN_SECRET: QOVDJriqAlOjljqSngfJBQ5WfqATFVOKeDOs3K8vBco=
+      REFRESH_TOKEN_SECRET: cYEE49QoBErNwFxoToDV20U2NFO5TnZQ3QVGH4bZkZQ=
+      VENDOR_AES_KEY: q0FaiRucqT31yQkMk6m7G1e6/XZHmRNf6CaY/r1ROVg=
+      # Its identity as an events-api customer. In default-tenant mode every
+      # topic is key-less, so the access key is never enforced.
+      NOTIFICATION_SERVICE_CUSTOMER_ID: notification-service
+      NOTIFICATION_SERVICE_ACCESS_KEY: ${CUSTOMER_ACCESS_KEY:-loomLocalKey123}
+      NOTIFICATION_SERVICE_SECURITY_MODE: NONE
+      BROKER_ENDPOINT: http://broker:8001
+      DEFAULT_TENANT_ENABLED: "true"
+      DEFAULT_TENANT_ID: default
+      TENANT_MGMT_ENABLED: "false"
+      TENANT_MGMT_SECRET: ${TENANT_MGMT_SECRET:-dev-tenant-secret-change-me}
+      REDIS_HOST: valkey
+      REDIS_PORT: "6379"
+      JAVA_OPTS: "-XX:MaxRAMPercentage=75"
+    depends_on:
+      events:
+        condition: service_healthy
+      valkey:
+        condition: service_started
+      # The fixtures go in first: the service registers its rules from the
+      # store at boot, so a row inserted afterwards is invisible until the next
+      # restart.
+      dispatch-seed:
+        condition: service_completed_successfully
+
+  # Distributed cache invalidation for notifications (ADR-0002). Valkey, because
+  # that is what the tenant stack runs.
+  valkey:
+    image: valkey/valkey:latest
+    ports:
+      - "${LOOM_VALKEY_PORT:-6379}:6379"
+
+  # ------------------------------------------------------------------ demo
+  #
+  # Everything below runs only under `--profile demo`. The services above are
+  # what a developer needs to run loom from an IDE; these are the rest of the
+  # story, so you can watch a decision travel from Anvil through loom to a
+  # notification without writing any of it yourself.
+
+  # The model gateway. In a cell this is LiteLLM in haven-models, reached with
+  # the tenant's virtual key. Running the same software here keeps the contract
+  # identical — both apps call ALIASES and hold no provider credential, so the
+  # only thing that changes is which upstream an alias points at.
+  #
+  # Anvil and loom ask for DIFFERENT chat aliases. That is not an accident of
+  # configuration: the alias names the role, and the gateway is where a tenant
+  # decides that its supervisor and the thing it supervises should not be the
+  # same model. Here they are, because a demo has one key.
+  # The demo needs a provider key and nothing else does, so the check for it
+  # lives here rather than on the variable. Compose interpolates the WHOLE file
+  # whatever profile is active, so a `${VAR:?...}` guard on a demo-only service
+  # also stops `docker compose up` for someone who only wanted Postgres.
+  demo-preflight:
+    image: busybox:1.36
+    profiles: ["demo"]
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    command:
+      - sh
+      - -c
+      - |
+        test -n "$$OPENAI_API_KEY" || {
+          echo "OPENAI_API_KEY is empty."
+          echo "The demo runs Anvil and loom for real, and both refuse to boot"
+          echo "without a reachable model gateway. Set it in .env (copy from"
+          echo ".env.example). The key goes to LiteLLM only - neither app ever"
+          echo "sees a provider credential, which is the point."
+          exit 1
+        }
+        echo "preflight ok"
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    profiles: ["demo"]
+    depends_on:
+      demo-preflight:
+        condition: service_completed_successfully
+    ports:
+      - "${LOOM_MODELS_PORT:-4000}:4000"
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-loom-local}
+    command: ["--config", "/etc/litellm/config.yaml", "--port", "4000"]
+    configs:
+      - source: litellm-config
+        target: /etc/litellm/config.yaml
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness')\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  # The tenant edge, as a stand-in.
+  #
+  # In a cell, Traefik strips the /{app} prefix and the identity layer sets the
+  # X-Auth-Request-* headers from an authenticated session. Both apps depend on
+  # that having happened. This nginx does the same two things so the demo can
+  # run on one machine.
+  #
+  # IT AUTHENTICATES NOBODY. It is a demo shim standing in for a real edge, and
+  # it exists because there is an unresolved platform question behind it: an app
+  # calling another app in-cluster has no way to authenticate today. See
+  # haven/SECURITY-edge-header-trust.md. Do not copy this into anything real,
+  # and note what loom does NOT do — it never sets those headers itself; it
+  # calls through the edge, exactly as it would in a cell.
+  edge:
+    image: nginx:1.27-alpine
+    profiles: ["demo"]
+    ports:
+      - "${LOOM_EDGE_PORT:-8088}:80"
+    configs:
+      - source: edge-config
+        target: /etc/nginx/conf.d/default.conf
+    depends_on:
+      - anvil-api
+      - anvil-ui
+      - loom-api
+      - loom-ui
+
+  # ---- Anvil: the app loom supervises -------------------------------------
+
+  anvil-api:
+    image: ghcr.io/${GHCR_OWNER:-altirllc}/haven-anvil-api:${ANVIL_TAG:-latest}
+    profiles: ["demo"]
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HAVEN_TENANT_ID: demo
+      STORAGE_S3_ENDPOINT: seaweedfs:8333
+      STORAGE_S3_ACCESS_KEY: admin
+      STORAGE_S3_SECRET_KEY: secret
+      STORAGE_S3_BUCKET: ${LOOM_BUCKET:-haven-local}
+      STORAGE_S3_USE_SSL: "false"
+      # The plan gate is part of what the demo shows. Raised from the
+      # default 10 so it is not the first thing you hit.
+      PLAN: ${ANVIL_PLAN:-free}
+      PLAN_FREE_ITEMS: ${ANVIL_PLAN_FREE_ITEMS:-25}
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_NAMESPACE: default
+      TEMPORAL_TASK_QUEUE: anvil
+      # Same database as loom, different schema — one Postgres per tenant is
+      # what a cell gives you, and the schema is what keeps apps apart.
+      POSTGRES_DATABASE_URL: postgres://postgres:postgres@postgres:5432/haven
+      POSTGRES_VECTORS_URL: postgres://postgres:postgres@postgres:5432/vectors
+      MODELS_GATEWAY_ENDPOINT: http://litellm:4000
+      MODELS_GATEWAY_API_KEY: ${LITELLM_MASTER_KEY:-sk-loom-local}
+      MODELS_CHAT_MODEL: chat-with-haven-anvil
+    depends_on:
+      postgres:
+        condition: service_healthy
+      litellm:
+        condition: service_healthy
+
+  anvil-jobs:
+    image: ghcr.io/${GHCR_OWNER:-altirllc}/haven-anvil-jobs:${ANVIL_TAG:-latest}
+    profiles: ["demo"]
+    environment:
+      NODE_ENV: production
+      HAVEN_TENANT_ID: demo
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_NAMESPACE: default
+      TEMPORAL_TASK_QUEUE: anvil
+      # No S3 and no port: anvil's jobs config declares neither.
+      POSTGRES_DATABASE_URL: postgres://postgres:postgres@postgres:5432/haven
+      POSTGRES_VECTORS_URL: postgres://postgres:postgres@postgres:5432/vectors
+      MODELS_GATEWAY_ENDPOINT: http://litellm:4000
+      MODELS_GATEWAY_API_KEY: ${LITELLM_MASTER_KEY:-sk-loom-local}
+      MODELS_CHAT_MODEL: chat-with-haven-anvil
+      # Fast enough to watch. In a cell this is 60s.
+      AGENT_INTERVAL: ${ANVIL_AGENT_INTERVAL:-30s}
+    depends_on:
+      anvil-api:
+        condition: service_started
+
+  anvil-ui:
+    image: ghcr.io/${GHCR_OWNER:-altirllc}/haven-anvil-ui:${ANVIL_TAG:-latest}
+    profiles: ["demo"]
+
+  # ---- loom: the supervisor ------------------------------------------------
+
+  loom-api:
+    image: ghcr.io/${GHCR_OWNER:-altirllc}/loom-api:${LOOM_TAG:-latest}
+    profiles: ["demo"]
+    environment:
+      SPRING_PROFILES_ACTIVE: production
+      HAVEN_TENANT_ID: demo
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_NAMESPACE: default
+      TEMPORAL_TASK_QUEUE: loom
+      POSTGRES_DATABASE_URL: jdbc:postgresql://postgres:5432/haven
+      POSTGRES_VECTORS_URL: jdbc:postgresql://postgres:5432/vectors
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgres
+      MONGODB_URI: mongodb://mongodb:27017/loom
+      STORAGE_S3_ENDPOINT: seaweedfs:8333
+      STORAGE_S3_ACCESS_KEY: admin
+      STORAGE_S3_SECRET_KEY: secret
+      STORAGE_S3_BUCKET: ${LOOM_BUCKET:-haven-local}
+      MODELS_GATEWAY_ENDPOINT: http://litellm:4000
+      MODELS_GATEWAY_API_KEY: ${LITELLM_MASTER_KEY:-sk-loom-local}
+      MODELS_CHAT_MODEL: chat-with-haven
+      MODELS_EMBEDDING_MODEL: text-embedding-1024
+      PLAN: ${LOOM_PLAN:-free}
+      PLAN_FREE_CASES: ${LOOM_PLAN_FREE_CASES:-25}
+      # Short enough that a case lapses while you are still watching. A cell
+      # would not use minutes.
+      CASE_SLA: ${LOOM_CASE_SLA:-10m}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      litellm:
+        condition: service_healthy
+
+  loom-jobs:
+    image: ghcr.io/${GHCR_OWNER:-altirllc}/loom-jobs:${LOOM_TAG:-latest}
+    profiles: ["demo"]
+    environment:
+      SPRING_PROFILES_ACTIVE: production
+      HAVEN_TENANT_ID: demo
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_NAMESPACE: default
+      TEMPORAL_TASK_QUEUE: loom
+      POSTGRES_DATABASE_URL: jdbc:postgresql://postgres:5432/haven
+      POSTGRES_VECTORS_URL: jdbc:postgresql://postgres:5432/vectors
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgres
+      MONGODB_URI: mongodb://mongodb:27017/loom
+      MODELS_GATEWAY_ENDPOINT: http://litellm:4000
+      MODELS_GATEWAY_API_KEY: ${LITELLM_MASTER_KEY:-sk-loom-local}
+      MODELS_CHAT_MODEL: chat-with-haven
+      MODELS_EMBEDDING_MODEL: text-embedding-1024
+      PLAN: ${LOOM_PLAN:-free}
+      PLAN_FREE_CASES: ${LOOM_PLAN_FREE_CASES:-25}
+      CASE_SLA: ${LOOM_CASE_SLA:-10m}
+      AGENT_INTERVAL: ${LOOM_AGENT_INTERVAL:-60s}
+      INGEST_INTERVAL: ${LOOM_INGEST_INTERVAL:-30s}
+      # Through the edge, never straight at the service: loom does not set
+      # identity headers, so it needs something in front of Anvil that does.
+      ANVIL_API_URL: http://edge/anvil
+      # Notifications, wired to the fixtures dispatch-seed installs.
+      DISPATCH_ENABLED: "true"
+      DISPATCH_BROKER_URL: http://broker:8001
+      # Only the TENANT's half is set here. The event name, rule ids and
+      # template id are loom's own and ship as defaults. These three ids match
+      # what dispatch-seed installs; loom will not invent a recipient, so
+      # leaving them out means no notification and an audit row saying so.
+      DISPATCH_CATEGORY_ID: a85e86bd-ad62-4962-9df1-89986a9d9a8d
+      DISPATCH_SUBCATEGORY_ID: 85e076db-d6d2-4a2e-9c81-039799e3c75e
+      DISPATCH_RECIPIENTS: 50f792c1-80f6-442a-a43f-8ab91cf6aa57
+    depends_on:
+      loom-api:
+        condition: service_started
+      notifications:
+        condition: service_started
+      # Not decoration: ANVIL_API_URL points at the edge, not at anvil-api.
+      edge:
+        condition: service_started
+
+  loom-ui:
+    image: ghcr.io/${GHCR_OWNER:-altirllc}/loom-ui:${LOOM_TAG:-latest}
+    profiles: ["demo"]
+
+  # ---- Tenant provisioning for Dispatch ------------------------------------
+  #
+  # fn-notifications cannot accept its FIRST rule without a CREATE_RULE row
+  # already in its store — creating a rule is itself an event, and routing that
+  # event needs a rule. loom registers everything else over the wire, but this
+  # one row it cannot do for itself, and it is a provisioning step rather than
+  # application logic. The category, subcategory and recipient are seeded here
+  # for the same reason: they are the tenant's, not loom's.
+  #
+  # Runs BEFORE notifications, because the service reads its rules at boot.
+  dispatch-seed:
+    image: mongo:8.0
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    configs:
+      - source: dispatch-fixtures
+        target: /seed.js
+    entrypoint: ["mongosh", "--quiet", "mongodb://mongodb:27017", "--file", "/seed.js"]
+    restart: "no"
+
+configs:
+  litellm-config:
+    content: |
+      model_list:
+        - model_name: chat-with-haven
+          litellm_params:
+            model: openai/gpt-4o-mini
+            api_key: os.environ/OPENAI_API_KEY
+        - model_name: chat-with-haven-anvil
+          litellm_params:
+            model: openai/gpt-4o-mini
+            api_key: os.environ/OPENAI_API_KEY
+        - model_name: text-embedding-1024
+          litellm_params:
+            model: openai/text-embedding-3-small
+            api_key: os.environ/OPENAI_API_KEY
+            # The platform standardised on 1024 so one embedding model serves
+            # every app; this model is natively 1536 and is asked to truncate.
+            dimensions: 1024
+      litellm_settings:
+        drop_params: true
+      general_settings:
+        master_key: os.environ/LITELLM_MASTER_KEY
+
+  edge-config:
+    content: |
+      # What Traefik plus the identity layer do in a cell: strip the /{app}
+      # prefix, and present an authenticated user to the app behind it.
+      #
+      # The headers below are a FICTION for the demo. Nothing here checks a
+      # password. See the comment on the `edge` service.
+      map $$host $$demo_user { default "demo@example.invalid"; }
+
+      server {
+        listen 80;
+
+        location /anvil/api/ {
+          proxy_pass http://anvil-api:3000/api/;
+          proxy_set_header X-Auth-Request-User  demo-user;
+          proxy_set_header X-Auth-Request-Email $$demo_user;
+          proxy_set_header X-Auth-Request-Roles admin;
+        }
+        location /anvil/ {
+          proxy_pass http://anvil-ui:8080/;
+        }
+
+        location /loom/api/ {
+          proxy_pass http://loom-api:3000/api/;
+          proxy_set_header X-Auth-Request-User  demo-user;
+          proxy_set_header X-Auth-Request-Email $$demo_user;
+          proxy_set_header X-Auth-Request-Roles admin;
+        }
+        location /loom/ {
+          proxy_pass http://loom-ui:8080/;
+        }
+
+        location = /       { return 302 /loom/; }
+        location = /loom   { return 302 /loom/; }
+        location = /anvil  { return 302 /anvil/; }
+      }
+
+  dispatch-fixtures:
+    content: |
+      // The tenant's side of the notification setup. Mirrors what the service's
+      // own integration fixtures install, because those are the only worked
+      // example of the document shapes: camelCase fields and a composite _id,
+      // which is NOT what the relational seed looks like (ADR-0001).
+      const db2 = db.getSiblingDB("notifications");
+      const now = new Date();
+      const TENANT = "default";
+      const CATEGORY = "a85e86bd-ad62-4962-9df1-89986a9d9a8d";
+      const SUBCATEGORY = "85e076db-d6d2-4a2e-9c81-039799e3c75e";
+      const USER = "50f792c1-80f6-442a-a43f-8ab91cf6aa57";
+      const P = "co.altir.fn.notifications.rebuild.entity";
+
+      function put(collection, doc) {
+        db2.getCollection(collection).replaceOne({ _id: doc._id }, doc, { upsert: true });
+      }
+
+      // The one row with no wire equivalent: without it the tenant cannot
+      // accept a single rule, including loom's own.
+      put("tenant_rule", {
+        _id: { tenantId: TENANT, tenantRuleId: "e68c2b1c-4d06-497f-8d15-02520a6db1bf" },
+        externalType: "my-rule-to-create-rule",
+        innerType: "REQUEST", innerSubtype: "CREATE_RULE", condition: "true",
+        transformations: {
+          id: "context['id']", condition: "context['condition']",
+          eventName: "context['eventName']", transformations: "context['transformations']",
+          correspondingEventType: "context['correspondingEventType']",
+          correspondingEventSubtype: "context['correspondingEventSubtype']",
+          requestId: "context['requestId']", topicToRerouteName: "context['topicToRerouteName']"
+        },
+        topicToRerouteName: "notification-input-topic",
+        createdAt: now, updatedAt: now, version: NumberLong("0"),
+        _class: P + ".tenant.TenantRule"
+      });
+
+      put("category", {
+        _id: { tenantId: TENANT, categoryId: CATEGORY }, name: "cases",
+        createdAt: now, updatedAt: now, version: NumberLong("0"),
+        _class: P + ".notification.Category"
+      });
+
+      put("subcategory", {
+        _id: { tenantId: TENANT, subcategoryId: SUBCATEGORY },
+        categoryId: CATEGORY, name: "escalation",
+        createdAt: now, updatedAt: now, version: NumberLong("0"),
+        _class: P + ".notification.Subcategory"
+      });
+
+      put("user", {
+        _id: { tenantId: TENANT, userId: USER },
+        name: "Loom", surname: "Operator",
+        mobileCountryCode: "+375", mobileNumber: "444991677",
+        email: "loom-operator@example.invalid",
+        createdAt: now, updatedAt: now, version: NumberLong("0"),
+        _class: P + ".user.User"
+      });
+
+      // APP_PUSH only: it publishes the rendered notification to a topic rather
+      // than calling a vendor, so the demo needs no SES / Twilio / Firebase
+      // credentials to deliver for real.
+      put("tenant_preferences", {
+        _id: { tenantId: TENANT, tenantPreferencesId: "8add9ca8-3550-4658-ba87-1f15a1c4c0bd" },
+        categoryId: CATEGORY, subcategoryId: SUBCATEGORY,
+        deliveryPreferences: { EMAIL: false, SMS: false, PUSH: false, APP_PUSH: true },
+        createdAt: now, updatedAt: now, version: NumberLong("0"),
+        _class: P + ".tenant.TenantPreferences"
+      });
+
+      // No user_preferences row on purpose. The live stack delivered with that
+      // collection empty: an absent user preference falls back to the tenant's,
+      // and seeding an unexercised document would be a guess dressed as setup.
+
+      print("dispatch fixtures seeded for tenant " + TENANT);
+
+  postgres-init:
+    content: |
+      CREATE DATABASE vectors;
+      \c vectors
+      CREATE EXTENSION IF NOT EXISTS vector;
+  s3-config:
+    content: |
+      {
+        "identities": [
+          {
+            "name": "admin",
+            "credentials": [
+              { "accessKey": "admin", "secretKey": "secret" }
+            ],
+            "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+          }
+        ]
+      }
+
+volumes:
+  postgres-data:
+  mongodb-data:
+  mongodb-config:
+  seaweedfs-data:

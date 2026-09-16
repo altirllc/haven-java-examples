@@ -1,0 +1,17 @@
+# Git stores text as LF. On Windows `core.autocrlf` hands the working copy back
+# as CRLF, and anything that is then executed on Linux breaks on the stray \r —
+# the Maven wrappers, dev.sh, and every file a Dockerfile copies into an image.
+# Pin the working copy to LF and make the two Windows script types the
+# exceptions they actually are.
+* text=auto eol=lf
+
+*.cmd  text eol=crlf
+*.bat  text eol=crlf
+
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.woff binary
+*.woff2 binary

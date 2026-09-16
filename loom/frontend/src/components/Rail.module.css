@@ -1,0 +1,5 @@
+/* Rule above the rail's footer control, in both the expanded and mini states.
+   Not a prop: `bd` is the four-sided border shorthand. */
+.footer {
+  border-top: 1px solid var(--mantine-color-default-border);
+}

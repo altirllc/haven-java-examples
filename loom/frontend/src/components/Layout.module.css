@@ -1,0 +1,46 @@
+@keyframes breathe {
+  0%, 100% { opacity: 0.5; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1.08); }
+}
+
+/* The agent icon "breathes" green while the daemon is alive (the sign of life). */
+.alive {
+  color: var(--mantine-color-green-6);
+  animation: breathe 2.6s ease-in-out infinite;
+}
+
+/* AppShell animates transform/top/height but never width, so the rail would
+   snap while the page eases. Width joins that list rather than replacing it,
+   reusing the shell's own timing vars instead of restating them. */
+.navbar {
+  overflow: hidden;
+  transition-property: width, transform, top, height;
+  transition-duration: var(--app-shell-transition-duration);
+  transition-timing-function: var(--app-shell-transition-timing-function);
+}
+
+/* Real properties, not --ai-* vars: Mantine writes its variant vars inline,
+   and inline custom properties can't be beaten from a stylesheet. */
+.agentToggle[data-on] {
+  background: var(--mantine-color-cyan-light);
+  color: var(--mantine-color-cyan-light-color);
+  border-color: var(--mantine-color-cyan-6);
+}
+.agentToggle[data-on]:hover {
+  background: var(--mantine-color-cyan-light-hover);
+}
+
+/* Clickable activity-feed card → opens the item detail. Rendered as a real
+   <button> for keyboard access; neutralize UA button styles. */
+.clickable {
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  width: 100%;
+  display: block;
+  transition: background 0.12s ease;
+}
+.clickable:hover,
+.clickable:focus-visible {
+  background: var(--mantine-color-default-hover);
+}

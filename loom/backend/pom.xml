@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <!-- spring-boot-starter-parent carries the dependencyManagement every module
+       used to import as a BOM, plus the compiler defaults. It also sets
+       -parameters, which is required, not cosmetic: Spring AI derives tool
+       argument names from reflection, and @ConfigurationProperties binds by
+       name. -->
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>4.1.0</version>
+    <relativePath/>
+  </parent>
+
+  <groupId>haven.loom</groupId>
+  <artifactId>loom</artifactId>
+  <version>1.0.0</version>
+  <packaging>pom</packaging>
+
+  <!-- Module names stay generic (domain, workflows, ...) so the `loom`
+       sentinel the CLI rewrites is confined to package dirs, the groupId, the
+       DB schema, the task queue, and workflow-id prefixes. -->
+  <modules>
+    <module>domain</module>
+    <module>contracts</module>
+    <module>workflows</module>
+    <module>orchestration</module>
+    <module>persistence</module>
+    <module>agent</module>
+    <module>api</module>
+    <module>jobs</module>
+  </modules>
+
+  <properties>
+    <java.version>25</java.version>
+    <!-- The profile spring-boot:run hands the app (override: -Drun.profiles=…). -->
+    <run.profiles>local</run.profiles>
+    <spring-ai.version>2.0.0</spring-ai.version>
+    <temporal.version>1.37.0</temporal.version>
+    <archunit.version>1.4.2</archunit.version>
+    <events-client.version>2.1.5</events-client.version>
+    <awssdk.version>2.48.1</awssdk.version>
+  </properties>
+
+  <!-- The events-api client is published to Altir's Artifactory, not to Central.
+       A clean machine needs credentials for it: build with
+       `-s ~/.m2/settings-altir.xml`, or give CI a settings.xml carrying a server
+       entry with this id. Nothing else in this build comes from here. -->
+  <repositories>
+    <repository>
+      <id>fn-libs-release-local</id>
+      <name>libs-release</name>
+      <url>https://artifactory.altir.net/artifactory/fn-libs-release-local</url>
+    </repository>
+  </repositories>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.springframework.ai</groupId>
+        <artifactId>spring-ai-bom</artifactId>
+        <version>${spring-ai.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>software.amazon.awssdk</groupId>
+        <artifactId>bom</artifactId>
+        <version>${awssdk.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>io.temporal</groupId>
+        <artifactId>temporal-sdk</artifactId>
+        <version>${temporal.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>co.altir.events.api</groupId>
+        <artifactId>events-api-client-spring</artifactId>
+        <version>${events-client.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.temporal</groupId>
+        <artifactId>temporal-testing</artifactId>
+        <version>${temporal.version}</version>
+      </dependency>
+      <!-- Plain archunit, NOT archunit-junit5: the Boot 4.1 BOM brings JUnit 6,
+           and no archunit-junit6 binding exists. Rules run from ordinary @Test
+           methods. -->
+      <dependency>
+        <groupId>com.tngtech.archunit</groupId>
+        <artifactId>archunit</artifactId>
+        <version>${archunit.version}</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <configuration>
+          <compilerArgs>
+            <arg>-Xlint:all</arg>
+            <arg>-Werror</arg>
+          </compilerArgs>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

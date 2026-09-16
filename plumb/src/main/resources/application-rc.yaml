@@ -1,0 +1,39 @@
+# The `rc` profile: the JVM runs here, the containers run on rc-server.
+#
+# Same compose file, same images, different address — the stack lives on the LAN
+# box at 192.168.1.100 and the app is started from the IDE on the workstation.
+# That split is the normal way to work on this machine, and it also happens to
+# exercise something the `local` profile never does: every seam is reached over a
+# real network rather than a loopback, which is what a cell looks like.
+#
+# Ports are remapped because rc-server already serves PostgreSQL 16 and
+# MongoDB 8.0 natively on the defaults; the numbers here match .env.example.
+#
+#   ssh rc-server "cd C:\\Users\\reconnect\\haven-plumb; docker compose up -d"
+#   ./mvnw spring-boot:run -Drun.profiles=rc
+
+plumb:
+  tenant-id: rc
+
+postgres:
+  url: jdbc:postgresql://192.168.1.100:15432/haven
+  vectors-url: jdbc:postgresql://192.168.1.100:15432/vectors
+  username: postgres
+  password: postgres
+
+mongo:
+  uri: mongodb://mongo:mongo@192.168.1.100:27018/plumb?authSource=admin
+
+temporal:
+  address: 192.168.1.100:7233
+  namespace: default
+
+storage:
+  s3:
+    endpoint: 192.168.1.100:8333
+    access-key: admin
+    secret-key: secret
+    bucket: haven-local
+
+siblings:
+  targets: []

@@ -1,0 +1,6 @@
+{
+  "project": ["src/**/*.{ts,tsx}"],
+  "ignoreDependencies": ["@mantine/code-highlight", "@mantine/core", "@mantine/dropzone", "@mantine/hooks", "@mantine/modals", "@mantine/notifications", "eslint", "postcss"],
+  "ignoreBinaries": ["vite", "tsc", "eslint", "knip"],
+  "exclude": ["exports", "types"]
+}

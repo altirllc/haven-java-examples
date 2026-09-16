@@ -1,0 +1,83 @@
+/* First-run only: this page is unreachable once the board has items, so it
+   answers one question — what is this app and how do I start?
+   Only what props cannot express lives here: layout, letter-spacing, the
+   off-scale display size, and the glyph's gradients. */
+.root {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1.05fr 0.95fr;
+  align-items: center;
+  gap: var(--mantine-spacing-xl);
+  min-height: min(560px, calc(100vh - 160px));
+  padding: 56px 0 56px 48px;
+  overflow: hidden;
+}
+
+.copy {
+  position: relative;
+  z-index: 1;
+  max-width: 46ch;
+}
+
+.eyebrow {
+  letter-spacing: 0.08em;
+}
+
+/* 38px is off the Mantine scale — deliberate display size, so it stays here
+   rather than pretending to be a token. */
+.name {
+  font-size: 38px;
+  letter-spacing: 0.05em;
+}
+
+.orb {
+  position: absolute;
+  top: 50%;
+  left: 44%;
+  transform: translateY(-50%);
+  width: 340px;
+  height: 340px;
+  display: grid;
+  place-items: center;
+  color: light-dark(var(--mantine-color-cyan-6), var(--mantine-color-cyan-2));
+}
+
+.orb::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(
+    closest-side,
+    color-mix(in srgb, var(--mantine-color-cyan-5) 22%, transparent),
+    transparent 72%
+  );
+  filter: blur(18px);
+}
+
+.orb svg {
+  position: relative;
+  filter: drop-shadow(0 0 20px color-mix(in srgb, var(--mantine-color-cyan-4) 50%, transparent));
+}
+
+.ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--mantine-color-cyan-4) 26%, transparent);
+}
+.ringInner {
+  inset: 14%;
+}
+.ringAccent {
+  inset: 28%;
+  border-color: color-mix(in srgb, var(--mantine-color-magenta-4) 20%, transparent);
+}
+
+@media (max-width: 768px) {
+  .root {
+    grid-template-columns: 1fr;
+    min-height: 0;
+    padding: 40px var(--mantine-spacing-md);
+  }
+}

@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>haven.loom</groupId>
+    <artifactId>loom</artifactId>
+    <version>1.0.0</version>
+  </parent>
+
+  <artifactId>workflows</artifactId>
+
+  <!-- THE FENCED MODULE. Temporal's Java SDK has no workflow sandbox, so
+       nothing at runtime stops workflow code from doing IO and corrupting
+       replay. This dependency block is the fence: Hibernate, Spring, Spring AI,
+       S3 and the Temporal *client* are not on this classpath, so calling them
+       does not compile.
+
+       Plain temporal-sdk ONLY — never temporal-spring-boot-starter. Its
+       @WorkflowImpl annotation ships inside the starter, so annotating an
+       implementation would drag Spring onto this classpath. jobs registers
+       workflow classes explicitly instead. -->
+  <dependencies>
+    <dependency>
+      <groupId>haven.loom</groupId>
+      <artifactId>domain</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>haven.loom</groupId>
+      <artifactId>contracts</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.temporal</groupId>
+      <artifactId>temporal-sdk</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.temporal</groupId>
+      <artifactId>temporal-testing</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.tngtech.archunit</groupId>
+      <artifactId>archunit</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <!-- verifyDeterminismFence, Maven edition. Maven's compile scope is
+           transitive, so a persistence-flavored dependency added to domain or
+           contracts flows onto this classpath with no compile error anywhere
+           and the fence silently evaporates. bannedDependencies walks the
+           RESOLVED dependency tree (transitives included) on every build and
+           fails it if anything forbidden lands in a main scope; test scope is
+           exempt. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-enforcer-plugin</artifactId>
+        <version>3.6.2</version>
+        <executions>
+          <execution>
+            <id>verify-determinism-fence</id>
+            <goals>
+              <goal>enforce</goal>
+            </goals>
+            <configuration>
+              <rules>
+                <bannedDependencies>
+                  <message>Determinism fence breached — these must never reach the workflows classpath. Temporal replays workflow code, so no IO, no Spring, no persistence here; put that work in an activity.</message>
+                  <searchTransitive>true</searchTransitive>
+                  <excludes>
+                    <exclude>org.springframework*:*:*:*:compile</exclude>
+                    <exclude>org.springframework*:*:*:*:runtime</exclude>
+                    <exclude>org.hibernate*:*:*:*:compile</exclude>
+                    <exclude>org.hibernate*:*:*:*:runtime</exclude>
+                    <exclude>jakarta.persistence:*:*:*:compile</exclude>
+                    <exclude>jakarta.persistence:*:*:*:runtime</exclude>
+                    <exclude>org.postgresql:*:*:*:compile</exclude>
+                    <exclude>org.postgresql:*:*:*:runtime</exclude>
+                    <exclude>com.zaxxer:*:*:*:compile</exclude>
+                    <exclude>com.zaxxer:*:*:*:runtime</exclude>
+                    <exclude>org.liquibase:*:*:*:compile</exclude>
+                    <exclude>org.liquibase:*:*:*:runtime</exclude>
+                    <exclude>org.mongodb:*:*:*:compile</exclude>
+                    <exclude>org.mongodb:*:*:*:runtime</exclude>
+                    <exclude>software.amazon*:*:*:*:compile</exclude>
+                    <exclude>software.amazon*:*:*:*:runtime</exclude>
+                    <exclude>com.azure*:*:*:*:compile</exclude>
+                    <exclude>com.azure*:*:*:*:runtime</exclude>
+                    <exclude>com.squareup.okhttp3:*:*:*:compile</exclude>
+                    <exclude>com.squareup.okhttp3:*:*:*:runtime</exclude>
+                  </excludes>
+                </bannedDependencies>
+              </rules>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

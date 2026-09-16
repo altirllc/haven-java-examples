@@ -1,0 +1,1 @@
+org.springframework.boot.diagnostics.FailureAnalyzer=haven.loom.persistence.PostgresUnreachableFailureAnalyzer,haven.loom.persistence.mongo.MongoUnreachableFailureAnalyzer

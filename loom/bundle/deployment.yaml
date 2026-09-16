@@ -1,0 +1,347 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loom
+  labels:
+    app: loom
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: loom
+  template:
+    metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3000"
+        prometheus.io/path: /actuator/prometheus
+      labels:
+        app: loom
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          image: ghcr.io/altirllc/loom-api:latest
+          ports:
+            - name: api
+              containerPort: 3000
+              protocol: TCP
+            - name: mcp
+              containerPort: 3001
+              protocol: TCP
+          envFrom:
+            - secretRef:
+                name: tenant-s3-secret
+            - secretRef:
+                name: tenant-models-secret
+            # PLAN (free|paid) from the tenant's service config.
+            - configMapRef:
+                name: loom-config
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "production"
+            - name: TEMPORAL_ADDRESS
+              value: "workflows-temporal.default:7233"
+            - name: HAVEN_TENANT_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['haven.tenant']
+            # MCP auth creds (issuer + audience) from the tenant-zitadel-secret secret; optional.
+            - name: ZITADEL_ISSUER
+              valueFrom:
+                secretKeyRef:
+                  name: tenant-zitadel-secret
+                  key: ZITADEL_ISSUER
+                  optional: true
+            - name: ZITADEL_MCP_AUDIENCE
+              valueFrom:
+                secretKeyRef:
+                  name: tenant-zitadel-secret
+                  key: ZITADEL_MCP_AUDIENCE
+                  optional: true
+            - name: TEMPORAL_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['haven.tenant']
+            - name: TEMPORAL_TASK_QUEUE
+              value: "loom"
+            # How long a case may sit unreviewed before its workflow lapses it.
+            # Both containers open cases, so both need the same value.
+            - name: CASE_SLA
+              value: "24h"
+            - name: POSTGRES_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: tenant-postgres-secret
+                  key: POSTGRES_USERNAME
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tenant-postgres-secret
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_DATABASE_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: tenant-postgres-secret
+                  key: POSTGRES_RECORDS_DATABASE
+            - name: POSTGRES_VECTORS_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: tenant-postgres-secret
+                  key: POSTGRES_VECTORS_DATABASE
+            - name: POSTGRES_DATABASE_URL
+              value: "jdbc:postgresql://postgres:5432/$(POSTGRES_DATABASE_NAME)"
+            - name: POSTGRES_VECTORS_URL
+              value: "jdbc:postgresql://postgres:5432/$(POSTGRES_VECTORS_NAME)"
+            - name: SPRING_DATASOURCE_USERNAME
+              value: "$(POSTGRES_USERNAME)"
+            - name: SPRING_DATASOURCE_PASSWORD
+              value: "$(POSTGRES_PASSWORD)"
+            # Wired, deliberately unused: MongoConnectionCheck proves the
+            # connection at boot; no collections or queries yet.
+            - name: MONGO_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: tenant-mongodb-secret
+                  key: MONGODB_USERNAME
+            - name: MONGO_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tenant-mongodb-secret
+                  key: MONGODB_PASSWORD
+            - name: MONGODB_URI
+              value: "mongodb://$(MONGO_USERNAME):$(MONGO_PASSWORD)@mongodb:27017/loom?authSource=admin"
+            # Chat + embeddings through the model gateway (tenant-models-secret
+            # carries the endpoint + tenant virtual key). Models are gateway
+            # aliases naming the role, not the vendor model behind it.
+            - name: MODELS_CHAT_MODEL
+              value: "chat-with-haven"
+            - name: MODELS_EMBEDDING_MODEL
+              value: "text-embedding-1024"
+          # A JVM needs a startupProbe: the readiness/liveness timings that suit
+          # Node would kill the pod mid-boot. startupProbe gives it up to 60s to
+          # come up, then hands over to the normal probes.
+          startupProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 3000
+            periodSeconds: 5
+            failureThreshold: 12
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 3000
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 3000
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 25m
+              memory: 1Gi
+            limits:
+              # MaxRAMPercentage=75 in the image sizes the heap off this limit,
+              # so it must be set or the JVM assumes the whole node.
+              memory: 2Gi
+          volumeMounts:
+            - name: api-tmp
+              mountPath: /tmp
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+        - name: ui
+          image: ghcr.io/altirllc/loom-ui:latest
+          ports:
+            - name: ui
+              containerPort: 8080
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+          volumeMounts:
+            - name: ui-tmp
+              mountPath: /tmp
+            - name: ui-cache
+              mountPath: /var/cache/nginx
+            - name: ui-run
+              mountPath: /var/run
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+        - name: jobs
+          image: ghcr.io/altirllc/loom-jobs:latest
+          ports:
+            - name: management
+              containerPort: 3002
+              protocol: TCP
+          # The agent daemon: a long-lived Temporal workflow triages items via
+          # the agent (runs in an activity, so it needs the AI credentials too).
+          envFrom:
+            - secretRef:
+                name: tenant-models-secret
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "production"
+            - name: TEMPORAL_ADDRESS
+              value: "workflows-temporal.default:7233"
+            - name: HAVEN_TENANT_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['haven.tenant']
+            - name: TEMPORAL_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['haven.tenant']
+            - name: TEMPORAL_TASK_QUEUE
+              value: "loom"
+            # How long a case may sit unreviewed before its workflow lapses it.
+            # Both containers open cases, so both need the same value.
+            - name: CASE_SLA
+              value: "24h"
+            # The app loom supervises. No /loom or /anvil prefix: apps address each
+            # other by SERVICE HOST, and Traefik strips the prefix at the edge.
+            - name: ANVIL_API_URL
+              value: "http://anvil-api.default:3000"
+            - name: INGEST_INTERVAL
+              value: "30s"
+            # Notifications through Dispatch. OFF by default and deliberately
+            # so: it needs things loom cannot create for itself. The tenant must
+            # already carry the CREATE_RULE bootstrap row in fn-notifications,
+            # plus a category, a subcategory and at least one recipient with
+            # delivery preferences. Until those exist loom records
+            # `notify-skipped` on the case rather than inventing an audience.
+            # See loom/L0-FINDINGS.md for the provisioning sequence.
+            - name: DISPATCH_ENABLED
+              value: "false"
+            - name: DISPATCH_BROKER_URL
+              value: "http://dispatch-messages.default:8001"
+            # The tenant's taxonomy and audience. No defaults on purpose — a
+            # wrong guess here notifies the wrong people.
+            - name: DISPATCH_CATEGORY_ID
+              value: ""
+            - name: DISPATCH_SUBCATEGORY_ID
+              value: ""
+            - name: DISPATCH_RECIPIENTS
+              value: ""
+            # loom's own vocabulary — the event name, the two rule ids and the
+            # template id — is NOT set here. It ships as the app's defaults
+            # because there is nothing for a tenant to choose, and a rule id
+            # must stay stable: changing one leaves the old rule live and the
+            # tenant then gets two notifications per case.
+            - name: POSTGRES_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: tenant-postgres-secret
+                  key: POSTGRES_USERNAME
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tenant-postgres-secret
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_DATABASE_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: tenant-postgres-secret
+                  key: POSTGRES_RECORDS_DATABASE
+            - name: POSTGRES_VECTORS_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: tenant-postgres-secret
+                  key: POSTGRES_VECTORS_DATABASE
+            - name: POSTGRES_DATABASE_URL
+              value: "jdbc:postgresql://postgres:5432/$(POSTGRES_DATABASE_NAME)"
+            - name: POSTGRES_VECTORS_URL
+              value: "jdbc:postgresql://postgres:5432/$(POSTGRES_VECTORS_NAME)"
+            - name: SPRING_DATASOURCE_USERNAME
+              value: "$(POSTGRES_USERNAME)"
+            - name: SPRING_DATASOURCE_PASSWORD
+              value: "$(POSTGRES_PASSWORD)"
+            # Wired, deliberately unused: MongoConnectionCheck proves the
+            # connection at boot; no collections or queries yet.
+            - name: MONGO_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: tenant-mongodb-secret
+                  key: MONGODB_USERNAME
+            - name: MONGO_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tenant-mongodb-secret
+                  key: MONGODB_PASSWORD
+            - name: MONGODB_URI
+              value: "mongodb://$(MONGO_USERNAME):$(MONGO_PASSWORD)@mongodb:27017/loom?authSource=admin"
+            # Chat + embeddings through the model gateway (tenant-models-secret
+            # carries the endpoint + tenant virtual key). Models are gateway
+            # aliases naming the role, not the vendor model behind it.
+            - name: MODELS_CHAT_MODEL
+              value: "chat-with-haven"
+            - name: MODELS_EMBEDDING_MODEL
+              value: "text-embedding-1024"
+          # Liveness only. The worker serves no traffic, so there is nothing for
+          # readiness to gate — and pod readiness is ANDed across containers, so a
+          # worker readiness check would unplug api traffic while Temporal is
+          # already queueing the work durably.
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 3002
+            periodSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 3002
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 25m
+              memory: 1Gi
+            limits:
+              memory: 2Gi
+          volumeMounts:
+            - name: jobs-tmp
+              mountPath: /tmp
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+      volumes:
+        - name: api-tmp
+          emptyDir: {}
+        - name: ui-tmp
+          emptyDir: {}
+        - name: ui-cache
+          emptyDir: {}
+        - name: ui-run
+          emptyDir: {}
+        - name: jobs-tmp
+          emptyDir: {}

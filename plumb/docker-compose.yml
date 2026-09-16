@@ -1,0 +1,187 @@
+# The seams, as containers.
+#
+# This file is a claim: these five containers are what a tenant vCluster gives a
+# Haven application, reduced to one machine. The service NAMES deliberately match
+# the in-cluster hostnames (postgres, mongodb, temporal) so the only difference
+# between running here and running in a cell is which values land in the env.
+#
+#   docker compose up -d
+#   ./mvnw spring-boot:run          # picks up the local profile automatically
+#
+# Temporal UI: http://localhost:8080   plumb: http://localhost:3000
+#
+# Every published port is overridable, because the stack does not always run on
+# the same machine as the JVM: a box that already serves Postgres and Mongo
+# natively needs these somewhere else. Copy .env.example to .env and remap.
+# See README for the remote-docker setup and the matching `rc` profile.
+
+name: plumb
+
+services:
+  postgres:
+    # pgvector's image, not plain postgres: the tenant's Postgres ships the
+    # extension, so a local stack without it would make the vectors probe red
+    # for a reason that does not exist in production.
+    image: pgvector/pgvector:pg17
+    ports:
+      - "${PLUMB_POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      # The tenant's records database is named `haven` in a cell. Matching it
+      # here keeps the local URL honest.
+      POSTGRES_DB: haven
+    configs:
+      - source: postgres-init
+        target: /docker-entrypoint-initdb.d/init.sql
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d haven"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  mongodb:
+    image: mongo:8.0
+    ports:
+      - "${PLUMB_MONGO_PORT:-27017}:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: mongo
+      MONGO_INITDB_ROOT_PASSWORD: mongo
+    volumes:
+      - mongodb-data:/data/db
+      # mongo's image declares /data/configdb as a volume too; naming it stops
+      # docker minting a fresh anonymous volume on every container recreate.
+      - mongodb-config:/data/configdb
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  temporal:
+    image: temporalio/auto-setup:latest
+    ports:
+      - "${PLUMB_TEMPORAL_PORT:-7233}:7233"
+    environment:
+      DB: postgres12
+      DB_PORT: "5432"
+      POSTGRES_USER: postgres
+      POSTGRES_PWD: postgres
+      POSTGRES_SEEDS: postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  temporal-ui:
+    image: temporalio/ui:latest
+    ports:
+      - "${PLUMB_TEMPORAL_UI_PORT:-8080}:8080"
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+    depends_on:
+      - temporal
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:latest
+    ports:
+      - "${PLUMB_S3_PORT:-8333}:8333"
+    command: "server -s3 -s3.config=/etc/seaweedfs/s3.json -s3.allowEmptyFolder=true"
+    configs:
+      - source: s3-config
+        target: /etc/seaweedfs/s3.json
+    volumes:
+      - seaweedfs-data:/data
+
+  # The tenant bucket is created during tenant provisioning, never by an app —
+  # plumb reports a missing bucket rather than creating one, because an app that
+  # quietly creates it hides a provisioning gap. So the local stack has to play
+  # the provisioner's part.
+  # Note it speaks to the FILER through `weed shell`, not to the S3 endpoint.
+  # The S3 gateway is configured with credentialled identities and denies
+  # anonymous requests, so an unsigned `curl -X PUT /bucket` gets a 403 — and
+  # `curl` without -f exits 0 on a 403, which is how an init that silently did
+  # nothing can still report success.
+  seaweedfs-init:
+    image: chrislusf/seaweedfs:latest
+    depends_on:
+      - seaweedfs
+    entrypoint:
+      - sh
+      - -c
+      - |
+        for i in $$(seq 1 60); do
+          echo "s3.bucket.create -name ${PLUMB_BUCKET:-haven-local}" | weed shell -master=seaweedfs:9333 >/dev/null 2>&1
+          if echo "s3.bucket.list" | weed shell -master=seaweedfs:9333 2>/dev/null | grep -q "${PLUMB_BUCKET:-haven-local}"; then
+            echo "bucket ${PLUMB_BUCKET:-haven-local} ready"; exit 0
+          fi
+          sleep 2
+        done
+        echo "seaweedfs did not come up"; exit 1
+    restart: "no"
+
+  # The model gateway, off by default: `docker compose --profile models up -d`.
+  #
+  # In a cell this is LiteLLM in haven-models, reached through the models-litellm
+  # mirror with the tenant's virtual key. Running the same software locally keeps
+  # the contract identical — apps call ALIASES and hold no vendor credential, so
+  # the only thing that changes between here and a cell is which upstream the
+  # alias points at. Set OPENAI_API_KEY in .env; swap the litellm_params below
+  # for azure/, anthropic/ or any provider LiteLLM supports.
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    profiles: ["models"]
+    ports:
+      - "${PLUMB_MODELS_PORT:-4000}:4000"
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-plumb-local}
+    command: ["--config", "/etc/litellm/config.yaml", "--port", "4000"]
+    configs:
+      - source: litellm-config
+        target: /etc/litellm/config.yaml
+
+configs:
+  litellm-config:
+    content: |
+      model_list:
+        - model_name: chat-with-haven
+          litellm_params:
+            model: openai/gpt-4o-mini
+            api_key: os.environ/OPENAI_API_KEY
+        - model_name: text-embedding-1024
+          litellm_params:
+            model: openai/text-embedding-3-small
+            api_key: os.environ/OPENAI_API_KEY
+            # The platform standardised on 1024 so one embedding model serves
+            # every app; this model is natively 1536 and is asked to truncate.
+            dimensions: 1024
+      litellm_settings:
+        drop_params: true
+      general_settings:
+        master_key: os.environ/LITELLM_MASTER_KEY
+  postgres-init:
+    content: |
+      CREATE DATABASE vectors;
+      \c vectors
+      CREATE EXTENSION IF NOT EXISTS vector;
+  s3-config:
+    content: |
+      {
+        "identities": [
+          {
+            "name": "admin",
+            "credentials": [
+              { "accessKey": "admin", "secretKey": "secret" }
+            ],
+            "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+          }
+        ]
+      }
+
+volumes:
+  postgres-data:
+  mongodb-data:
+  mongodb-config:
+  seaweedfs-data:

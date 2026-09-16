@@ -1,0 +1,6 @@
+# DDL for the pgvector `vectors` database — applied programmatically by
+# vectorsLiquibase (VectorStoreConfig), never by Boot's autoconfigured
+# Liquibase, which owns the primary app database.
+databaseChangeLog:
+  - include:
+      file: db/vectors/001-init.sql

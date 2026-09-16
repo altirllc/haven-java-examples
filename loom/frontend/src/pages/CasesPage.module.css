@@ -1,0 +1,17 @@
+/* Rendered as a real <a> so the whole card is a link; neutralize UA styles. */
+.card {
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  width: 100%;
+  display: block;
+  color: inherit;
+  text-decoration: none;
+  transition: background 0.15s ease, transform 0.15s ease;
+
+  &:hover,
+  &:focus-visible {
+    background: var(--mantine-color-default-hover);
+    transform: translateY(-1px);
+  }
+}

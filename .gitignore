@@ -1,0 +1,37 @@
+# Repo-wide ignores. Each app keeps its own .gitignore as well, for rules that
+# are a decision rather than housekeeping — notably application-local.yaml,
+# which loom ignores (it holds real credentials) and plumb commits on purpose
+# (compose defaults only, so the example clones and runs). That difference is
+# explained where it applies and deliberately not flattened into here.
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Build output
+target/
+node_modules/
+dist/
+build/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-error.log*
+
+# Local compose port/credential overrides. `.env.example` is tracked and is the
+# documentation — `.env` is the copy you edit, and never belongs in the repo.
+.env
+.env.local
+
+# Claude Code: keep CLAUDE.md and any skills, drop per-user state.
+.claude/settings.local.json

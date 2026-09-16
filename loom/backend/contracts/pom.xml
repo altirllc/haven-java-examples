@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>haven.loom</groupId>
+    <artifactId>loom</artifactId>
+    <version>1.0.0</version>
+  </parent>
+
+  <artifactId>contracts</artifactId>
+
+  <!-- The Temporal surface: @ActivityInterface and @WorkflowInterface types
+       only, no implementations. Both workflows (which implements them) and
+       api/agent (which hold typed stubs to signal them) compile against this.
+
+       Maven's compile scope is transitive — the exact invisibility the
+       determinism fence cannot afford. The enforcer rule in workflows/pom.xml
+       is what holds the line: anything persistence- or Spring-flavored that
+       leaks in here fails the workflows build. -->
+  <dependencies>
+    <dependency>
+      <groupId>haven.loom</groupId>
+      <artifactId>domain</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.temporal</groupId>
+      <artifactId>temporal-sdk</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+</project>

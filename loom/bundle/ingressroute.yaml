@@ -1,0 +1,51 @@
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: loom-strip-prefix
+spec:
+  stripPrefix:
+    prefixes:
+      - /loom
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: loom-mcp-strip-prefix
+spec:
+  stripPrefix:
+    prefixes:
+      - /mcp/loom
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: loom-routes
+spec:
+  entryPoints:
+    - web
+  routes:
+    # MCP → the dedicated loom-mcp service (MCP-only backend), NOT loom-api.
+    # The ungated /mcp carve-out can't reach REST routes that don't exist here.
+    - match: PathPrefix(`/mcp/loom`)
+      kind: Rule
+      priority: 210
+      middlewares:
+        - name: loom-mcp-strip-prefix
+      services:
+        - name: loom-mcp
+          port: 3001
+    - match: PathPrefix(`/loom/api`)
+      kind: Rule
+      priority: 200
+      middlewares:
+        - name: loom-strip-prefix
+      services:
+        - name: loom-api
+          port: 3000
+    - match: PathPrefix(`/loom`)
+      kind: Rule
+      middlewares:
+        - name: loom-strip-prefix
+      services:
+        - name: loom-ui
+          port: 80

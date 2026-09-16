@@ -1,0 +1,42 @@
+# The local profile: docker-compose.yml, addressed from the host.
+#
+# Committed on purpose, unlike the agent scaffold's gitignored equivalent —
+# there is nothing secret here, and "clone it and it runs" is most of what an
+# example repository is for. Anything that IS secret (the model gateway key)
+# stays out of this file and arrives as an environment variable; see README.
+#
+# spring-boot:run activates this profile automatically.
+
+plumb:
+  tenant-id: local
+
+postgres:
+  url: jdbc:postgresql://localhost:5432/haven
+  vectors-url: jdbc:postgresql://localhost:5432/vectors
+  username: postgres
+  password: postgres
+
+mongo:
+  uri: mongodb://mongo:mongo@localhost:27017/plumb?authSource=admin
+
+temporal:
+  address: localhost:7233
+  # temporalio/auto-setup creates `default`. In a cell this is the tenant id —
+  # one namespace per tenant — so it is the one local value that is structurally
+  # different from production rather than just a different address.
+  namespace: default
+
+storage:
+  s3:
+    endpoint: localhost:8333
+    access-key: admin
+    secret-key: secret
+    bucket: haven-local
+
+# In a cell these are in-cluster hostnames. On a dev machine they do not resolve,
+# and a name that does not resolve is reported as "not installed here" rather
+# than as a failure — so leaving the defaults in place would be honest but
+# noisy. Emptied instead; point them at a port-forward when you want to test
+# one.
+siblings:
+  targets: []

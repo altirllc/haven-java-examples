@@ -1,0 +1,7 @@
+# plumb owns exactly one table. It exists so the records probe can prove the
+# write path, not to keep history: every row it writes is deleted in the same
+# sweep. New DDL = new formatted SQL file + an include here; never edit a
+# shipped changeset.
+databaseChangeLog:
+  - include:
+      file: db/changelog/001-heartbeat.sql

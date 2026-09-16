@@ -1,0 +1,175 @@
+spring:
+  main:
+    # servlet, not none: the worker serves no application traffic, but
+    # actuator needs a listener to expose probes and metrics.
+    web-application-type: servlet
+  application:
+    name: loom-jobs
+  threads:
+    virtual:
+      enabled: true
+  datasource:
+    url: ${POSTGRES_DATABASE_URL}
+    hikari:
+      # Pin the search_path so everything this datasource creates lands in the
+      # app's schema — including Spring AI's chat-memory table, which would
+      # otherwise be created in `public`. House rule: never write to public.
+      schema: loom
+      # Backing services race the app at boot (compose initdb locally, pod
+      # ordering in a cell). Hikari retries the first connection this long —
+      # a bounded wait, then the real error.
+      initialization-fail-timeout: 30000
+  # Wired, deliberately unused — MongoConnectionCheck pings at boot. NOT
+  # spring.data.mongodb.*: those keys are dead in Boot 4 and silently unbound.
+  mongodb:
+    uri: ${MONGODB_URI}
+  jpa:
+    # Liquibase is the single DDL source of truth; Hibernate only checks that
+    # the entities still match it, and kills the boot on drift.
+    hibernate:
+      ddl-auto: validate
+  ai:
+    openai:
+      # The platform model gateway (OpenAI-compatible LiteLLM). Auth is the
+      # tenant's virtual key; ModelsGatewayConfig probes it at boot. Model
+      # names are gateway aliases. Values derive from the models-gateway
+      # block below — the single source both the client and the probe read.
+      base-url: ${models-gateway.endpoint}/v1
+      api-key: ${models-gateway.api-key}
+      chat:
+        options:
+          model: ${models-gateway.chat-model}
+      embedding:
+        options:
+          model: ${models-gateway.embedding-model}
+# The vector store is wired explicitly against POSTGRES_VECTORS_URL in
+# VectorStoreConfig, so its autoconfiguration is excluded: it binds to the app's
+# primary datasource, which would put vector_store in the `loom` schema of the
+# app database instead of the vectors database.
+    chat:
+      memory:
+        repository:
+          jdbc:
+            # Liquibase owns this table's DDL (002-chat-memory.sql) — the library's
+            # unlocked boot-time initializer would race the api's on fresh tenants.
+            initialize-schema: never
+  autoconfigure:
+    exclude:
+      - org.springframework.ai.vectorstore.pgvector.autoconfigure.PgVectorStoreAutoConfiguration
+
+# ECS JSON to stdout. Spring Boot supports this natively — no logback-spring.xml,
+# no logback-ecs-encoder.
+logging:
+  structured:
+    format:
+      console: ecs
+  level:
+    root: ${LOG_LEVEL:info}
+    # Spring AI's MCP annotation scanner trips harmless early-init warnings
+    # (spring-ai#4694, #6535); drop this when upgrading past 2.0.0.
+    # bracket notation: relaxed binding strips the $ from unbracketed keys
+    '[org.springframework.context.support.PostProcessorRegistrationDelegate$BeanPostProcessorChecker]': error
+
+postgres:
+  vectors-url: ${POSTGRES_VECTORS_URL}
+
+haven:
+  tenant-id: ${HAVEN_TENANT_ID}
+
+# free refuses new items once the allowance is spent; paid continues metered.
+# How long a case may sit unreviewed before the workflow lapses it.
+cases:
+  sla: ${CASE_SLA:24h}
+
+plan:
+  name: ${PLAN:free}
+  free-cases: ${PLAN_FREE_CASES:10}
+
+temporal:
+  address: ${TEMPORAL_ADDRESS}
+  namespace: ${TEMPORAL_NAMESPACE}
+  task-queue: ${TEMPORAL_TASK_QUEUE:loom}
+
+# Both daemons live here.
+agent:
+  interval: ${AGENT_INTERVAL:60s}
+
+ingest:
+  interval: ${INGEST_INTERVAL:30s}
+
+# Notifications through Dispatch (the foundation events platform). Off by
+# default: a tenant without it is not broken, and loom records that it could not
+# notify rather than failing.
+#
+# What loom registers for itself: its event type, its routing rule, its template.
+# What the tenant must already have: the CREATE_RULE bootstrap row seeded into
+# fn-notifications, the category/subcategory below, and the recipients as users
+# with delivery preferences. See loom/L0-FINDINGS.md.
+dispatch:
+  enabled: ${DISPATCH_ENABLED:false}
+  event-name: ${DISPATCH_EVENT_NAME:loom-case-needs-a-human}
+  # loom's own ids, and real defaults rather than placeholders: the rule and the
+  # template belong to loom, so there is nothing for a tenant to decide and
+  # nothing to leave blank. They must be valid UUIDs — fn-notifications parses
+  # them — and they must be STABLE, because a rule's identity is its id.
+  notify-rule-id: ${DISPATCH_NOTIFY_RULE_ID:6100b0e2-0000-4000-8000-000000000002}
+  template-rule-id: ${DISPATCH_TEMPLATE_RULE_ID:6100b0e2-0000-4000-8000-000000000003}
+  template-id: ${DISPATCH_TEMPLATE_ID:6100b0e2-0000-4000-8000-000000000001}
+  category-id: ${DISPATCH_CATEGORY_ID:}
+  subcategory-id: ${DISPATCH_SUBCATEGORY_ID:}
+  recipients: ${DISPATCH_RECIPIENTS:}
+
+# The events client's own configuration. Only read when dispatch is enabled.
+altir:
+  events:
+    broker:
+      base-url: ${DISPATCH_BROKER_URL:http://dispatch-messages.default:8001}
+      consumer-id: loom
+    authentication:
+      customer-id: ${DISPATCH_CUSTOMER_ID:default}
+      access-key: ${DISPATCH_ACCESS_KEY:DefaultTenant1!}
+      security-mode: ${DISPATCH_SECURITY_MODE:NONE}
+
+# The app loom supervises. No /anvil prefix: apps address each other by service
+# host in the tenant vCluster, and Traefik strips the prefix at the edge.
+anvil:
+  api-url: ${ANVIL_API_URL:http://anvil-api.default:3000}
+  # Optional. Anvil's REST resolves callers from edge headers rather than from a
+  # bearer token, so this is ignored today — see AnvilProperties.
+  token: ${ANVIL_TOKEN:}
+  page-size: ${ANVIL_PAGE_SIZE:50}
+  timeout: ${ANVIL_TIMEOUT:10s}
+
+models-gateway:
+  endpoint: ${MODELS_GATEWAY_ENDPOINT:http://models-litellm.default:4000}
+  api-key: ${MODELS_GATEWAY_API_KEY}
+  chat-model: ${MODELS_CHAT_MODEL:chat-with-haven}
+  embedding-model: ${MODELS_EMBEDDING_MODEL:text-embedding-1024}
+
+# The worker serves no application traffic. This listener exists only so the
+# cell can probe it and scrape it — before this, jobs had no liveness signal at
+# all, so a wedged worker was invisible to Kubernetes.
+server:
+  port: ${MANAGEMENT_PORT:3002}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+      group:
+        liveness:
+          include: livenessState
+        # Contributor IDs — Boot FAILS STARTUP if a group names one that does not
+        # exist (Mongo's is `mongo`, NOT `mongodb`). Mongo stays out of readiness
+        # PERMANENTLY, even once Mongo features exist: with one replica, failing
+        # readiness is a full outage, so a secondary datastore blip must degrade
+        # its own features, not take down the app. Only Postgres, which everything
+        # depends on, belongs here.
+        readiness:
+          include: readinessState,db

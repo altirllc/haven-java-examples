@@ -1,0 +1,38 @@
+# Maven
+target/
+pom.xml.releaseBackup
+release.properties
+*.versionsBackup
+dependency-reduced-pom.xml
+.flattened-pom.xml
+# The wrapper is the only-script variant: mvnw + maven-wrapper.properties are
+# tracked; a jar would only appear if someone regenerates with the bin variant.
+.mvn/wrapper/maven-wrapper.jar
+
+# Node modules (frontend/ only)
+node_modules/
+dist/
+
+# Local config (holds real credentials)
+application-local.yaml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Claude Code (keep skills and CLAUDE.md, ignore user state)
+.claude/settings.local.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Compose port overrides for whichever host the stack runs on.
+.env

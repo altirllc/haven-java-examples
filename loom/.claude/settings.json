@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cat:*)",
+      "Bash(chmod:*)",
+      "Bash(cp:*)",
+      "Bash(curl:*)",
+      "Bash(docker:*)",
+      "Bash(echo:*)",
+      "Bash(env:*)",
+      "Bash(export:*)",
+      "Bash(find:*)",
+      "Bash(git:*)",
+      "Bash(grep:*)",
+      "Bash(head:*)",
+      "Bash(jq:*)",
+      "Bash(ls:*)",
+      "Bash(mkdir:*)",
+      "Bash(mv:*)",
+      "Bash(ps:*)",
+      "Bash(rm:*)",
+      "Bash(sed:*)",
+      "Bash(sort:*)",
+      "Bash(source:*)",
+      "Bash(tail:*)",
+      "Bash(test:*)",
+      "Bash(tree:*)",
+      "Bash(wc:*)",
+      "Bash(xargs:*)",
+      "Bash(backend/mvnw:*)",
+      "Bash(java:*)"
+    ]
+  }
+}

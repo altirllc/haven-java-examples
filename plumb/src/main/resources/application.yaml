@@ -1,0 +1,131 @@
+spring:
+  application:
+    name: plumb
+  threads:
+    virtual:
+      enabled: true
+
+server:
+  port: ${PORT:3000}
+
+# --------------------------------------------------------------------------
+# Seam configuration.
+#
+# Every value below defaults to EMPTY, and nothing here is validated. That is
+# the whole design: an unset variable makes its probe report SKIPPED and name
+# the variable, instead of killing the process the way it would in any other
+# Haven service. The env var names are the ones the bundle injects, so this file
+# doubles as the contract a Java app on Haven is wired to.
+# --------------------------------------------------------------------------
+
+plumb:
+  tenant-id: ${HAVEN_TENANT_ID:}
+  interval: ${PLUMB_INTERVAL:60s}
+  probe-timeout: ${PLUMB_PROBE_TIMEOUT:20s}
+  startup-delay: ${PLUMB_STARTUP_DELAY:5s}
+  # Run a real workflow rather than only describing the namespace.
+  deep: ${PLUMB_DEEP:true}
+
+# tenant-postgres-secret. Two databases on the tenant's own instance: the
+# records database apps put their schema in, and the vectors database carrying
+# pgvector. The bundle composes both URLs from the secret's database names.
+postgres:
+  url: ${POSTGRES_DATABASE_URL:}
+  vectors-url: ${POSTGRES_VECTORS_URL:}
+  username: ${POSTGRES_USERNAME:}
+  password: ${POSTGRES_PASSWORD:}
+  schema: ${POSTGRES_SCHEMA:plumb}
+
+# tenant-mongodb-secret.
+mongo:
+  uri: ${MONGODB_URI:}
+  collection: ${MONGODB_COLLECTION:plumb}
+
+# Replicated into the tenant vCluster. The namespace is the tenant id.
+temporal:
+  address: ${TEMPORAL_ADDRESS:}
+  namespace: ${TEMPORAL_NAMESPACE:}
+  task-queue: ${TEMPORAL_TASK_QUEUE:plumb}
+
+# tenant-s3-secret. The bucket is the tenant's and shared: own a prefix, never
+# the root.
+storage:
+  s3:
+    endpoint: ${STORAGE_S3_ENDPOINT:}
+    access-key: ${STORAGE_S3_ACCESS_KEY:}
+    secret-key: ${STORAGE_S3_SECRET_KEY:}
+    bucket: ${STORAGE_S3_BUCKET:}
+    prefix: ${STORAGE_S3_PREFIX:plumb/}
+    use-ssl: ${STORAGE_S3_USE_SSL:false}
+
+# tenant-models-secret. Model names are gateway ALIASES naming the role, not the
+# vendor model behind them.
+models-gateway:
+  endpoint: ${MODELS_GATEWAY_ENDPOINT:}
+  api-key: ${MODELS_GATEWAY_API_KEY:}
+  chat-model: ${MODELS_CHAT_MODEL:chat-with-haven}
+  embedding-model: ${MODELS_EMBEDDING_MODEL:text-embedding-1024}
+  embedding-dimensions: ${MODELS_EMBEDDING_DIMENSIONS:1024}
+
+# tenant-zitadel-secret.
+zitadel:
+  issuer: ${ZITADEL_ISSUER:}
+  mcp-audience: ${ZITADEL_MCP_AUDIENCE:}
+
+# Other apps in this tenant. Note the shape: apps address each other by SERVICE
+# HOST and carry no /{app} path prefix — Traefik strips that at the edge, so an
+# in-cluster call never has it. A host that does not resolve means the app is
+# not installed here, which the probe reports as SKIPPED rather than red.
+# Override an individual entry with e.g. SIBLINGS_TARGETS_0_URL.
+siblings:
+  targets:
+    - id: anvil
+      name: Anvil
+      url: http://anvil-api.default:3000/health
+    - id: signal
+      name: Signal
+      url: http://signal-api.default:3000/api/capabilities
+    - id: dispatch-events
+      name: Dispatch — events
+      url: http://dispatch-events.default:8080/events/health
+    - id: dispatch-notifications
+      name: Dispatch — notifications
+      url: http://dispatch-notifications.default:8089/notifications/actuator/health
+
+# Readiness is deliberately self-only. plumb reports on seams; it must not be
+# taken out of service by one, or a broken tenant would silently lose the only
+# thing that could explain it. There is nothing to exclude here either — with
+# drivers instead of spring-boot-starter-data-*, Boot contributes no db or mongo
+# health indicator in the first place.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState
+
+logging:
+  level:
+    root: ${LOG_LEVEL:info}
+
+---
+# Cells run with SPRING_PROFILES_ACTIVE=production, set by the bundle.
+spring:
+  config:
+    activate:
+      on-profile: production
+
+# ECS JSON to stdout, natively — no logback XML, no encoder library.
+logging:
+  structured:
+    format:
+      console: ecs

@@ -1,0 +1,11 @@
+/* Same recipe as the neighboring ActionIcons — body well + default border;
+   the round shape alone marks it as identity. */
+.placeholder {
+  background: var(--mantine-color-body);
+  border: 1px solid var(--mantine-color-default-border);
+  color: light-dark(var(--mantine-color-gray-7), var(--mantine-color-gray-4));
+}
+
+.target:hover .placeholder {
+  background: var(--mantine-color-default-hover);
+}

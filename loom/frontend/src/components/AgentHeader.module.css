@@ -1,0 +1,43 @@
+/* The labelled spec strip below the head row. A 1px grid gap over a
+   border-coloured background draws clean dividers in any column count, so the
+   cells reflow from 4-across (wide) to 2×2 (narrow) without ragged borders. */
+.spec {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: var(--mantine-color-default-border);
+  border-top: 1px solid var(--mantine-color-default-border);
+}
+
+@media (min-width: 48em) {
+  .spec {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+.cell {
+  background: var(--mantine-color-body);
+  padding: 9px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.microLabel {
+  font-family: var(--mantine-font-family-monospace);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--mantine-color-dimmed);
+}
+
+.val {
+  font-family: var(--mantine-font-family-monospace);
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

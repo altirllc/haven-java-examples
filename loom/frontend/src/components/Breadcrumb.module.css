@@ -1,0 +1,33 @@
+/* 13px sits between the xs and sm tokens — deliberate, and declared once.
+   Text/Anchor set their own font-size from --text-fz, so setting the variable
+   is what actually reaches them; a plain font-size here would not. */
+.crumbs {
+  --text-fz: 13px;
+  font-size: 13px;
+  white-space: nowrap;
+  flex-wrap: nowrap;
+  /* Shrink and scroll rather than displacing the header actions. */
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.crumbs::-webkit-scrollbar {
+  display: none;
+}
+
+/* Mantine's separator is gray-7/dark-2 by default; ours is the quieter border
+   tone, reached through the Styles API rather than its generated class. */
+.separator {
+  color: var(--mantine-color-default-border);
+}
+
+.link {
+  color: var(--mantine-color-dimmed);
+}
+.link:hover {
+  color: var(--mantine-color-text);
+}
+
+.leaf {
+  color: light-dark(var(--mantine-color-black), var(--mantine-color-white));
+}

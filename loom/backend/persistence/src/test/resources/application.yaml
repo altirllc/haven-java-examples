@@ -1,0 +1,14 @@
+# Mirrors the app configs' data-layer settings so the test exercises the same
+# path a cell runs: schema-pinned Hikari, Liquibase DDL, Hibernate validation.
+spring:
+  datasource:
+    hikari:
+      schema: loom
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+
+plan:
+  name: ${PLAN:free}
+  free-cases: ${PLAN_FREE_CASES:10}

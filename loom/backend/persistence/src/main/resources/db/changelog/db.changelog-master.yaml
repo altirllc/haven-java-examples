@@ -1,0 +1,9 @@
+# The single DDL source of truth for the app database. New DDL = new formatted
+# SQL file + an include here; never edit a shipped changeset.
+databaseChangeLog:
+  - include:
+      file: db/changelog/001-init.sql
+  - include:
+      file: db/changelog/002-chat-memory.sql
+  - include:
+      file: db/changelog/003-usage-events.sql

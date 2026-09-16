@@ -1,0 +1,166 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plumb
+  labels:
+    app: plumb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: plumb
+  template:
+    metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3000"
+        prometheus.io/path: /actuator/prometheus
+      labels:
+        app: plumb
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          image: ghcr.io/altirllc/plumb:latest
+          ports:
+            - name: api
+              containerPort: 3000
+              protocol: TCP
+          # This env block IS the deliverable. It is the complete wiring a Java
+          # application gets in a tenant vCluster, and plumb exercises every line
+          # of it — so a green page here is proof the block is correct, and this
+          # file is the thing to copy when wiring a new app.
+          #
+          # Note every secretKeyRef is `optional: true`. Everywhere else that
+          # would be wrong; here a missing secret must produce a SKIPPED row that
+          # names the variable, not a pod that will not start.
+          envFrom:
+            - secretRef:
+                name: tenant-s3-secret
+                optional: true
+            - secretRef:
+                name: tenant-models-secret
+                optional: true
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "production"
+            - name: HAVEN_TENANT_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['haven.tenant']
+            # Temporal, replicated into the vCluster. The namespace is the
+            # tenant; the task queue is this app's own, so its worker cannot
+            # steal another app's work.
+            - name: TEMPORAL_ADDRESS
+              value: "workflows-temporal.default:7233"
+            - name: TEMPORAL_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['haven.tenant']
+            - name: TEMPORAL_TASK_QUEUE
+              value: "plumb"
+            # Postgres: one instance per tenant, two databases on it.
+            - name: POSTGRES_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: tenant-postgres-secret
+                  key: POSTGRES_USERNAME
+                  optional: true
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tenant-postgres-secret
+                  key: POSTGRES_PASSWORD
+                  optional: true
+            - name: POSTGRES_DATABASE_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: tenant-postgres-secret
+                  key: POSTGRES_RECORDS_DATABASE
+                  optional: true
+            - name: POSTGRES_VECTORS_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: tenant-postgres-secret
+                  key: POSTGRES_VECTORS_DATABASE
+                  optional: true
+            # $(VAR) expands from env vars declared EARLIER in this same
+            # container — a Kubernetes feature, not a templating accident.
+            - name: POSTGRES_DATABASE_URL
+              value: "jdbc:postgresql://postgres:5432/$(POSTGRES_DATABASE_NAME)"
+            - name: POSTGRES_VECTORS_URL
+              value: "jdbc:postgresql://postgres:5432/$(POSTGRES_VECTORS_NAME)"
+            - name: MONGO_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: tenant-mongodb-secret
+                  key: MONGODB_USERNAME
+                  optional: true
+            - name: MONGO_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tenant-mongodb-secret
+                  key: MONGODB_PASSWORD
+                  optional: true
+            - name: MONGODB_URI
+              value: "mongodb://$(MONGO_USERNAME):$(MONGO_PASSWORD)@mongodb:27017/plumb?authSource=admin"
+            # Model gateway aliases name the ROLE, not the vendor model.
+            - name: MODELS_CHAT_MODEL
+              value: "chat-with-haven"
+            - name: MODELS_EMBEDDING_MODEL
+              value: "text-embedding-1024"
+            - name: ZITADEL_ISSUER
+              valueFrom:
+                secretKeyRef:
+                  name: tenant-zitadel-secret
+                  key: ZITADEL_ISSUER
+                  optional: true
+            - name: ZITADEL_MCP_AUDIENCE
+              valueFrom:
+                secretKeyRef:
+                  name: tenant-zitadel-secret
+                  key: ZITADEL_MCP_AUDIENCE
+                  optional: true
+          # A JVM needs a startupProbe: readiness timings that suit Node would
+          # kill the pod mid-boot. Readiness carries NO seam checks — plumb must
+          # stay in service precisely when a seam is down, or the tenant loses
+          # the only thing that could explain the outage.
+          startupProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 3000
+            periodSeconds: 5
+            failureThreshold: 12
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 3000
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 3000
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 25m
+              memory: 512Mi
+            limits:
+              # MaxRAMPercentage=75 in the image sizes the heap off this limit,
+              # so it must be set or the JVM assumes the whole node.
+              memory: 1Gi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+      volumes:
+        - name: tmp
+          emptyDir: {}

@@ -1,0 +1,21 @@
+{
+  "id": "plumb",
+  "publisher": "haven",
+  "name": "Plumb",
+  "description": "Exercises every platform seam a Haven application is wired to and reports each one green or red.",
+  "tagline": "that check",
+  "icon": "Activity",
+  "tags": [
+    "diagnostics",
+    "platform"
+  ],
+  "visible": false,
+  "features": [
+    {
+      "id": "DEEP_TEMPORAL_PROBE",
+      "name": "Deep Temporal probe",
+      "description": "Run a real workflow rather than only describing the namespace",
+      "default": true
+    }
+  ]
+}

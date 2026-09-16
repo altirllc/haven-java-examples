@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>haven.loom</groupId>
+    <artifactId>loom</artifactId>
+    <version>1.0.0</version>
+  </parent>
+
+  <artifactId>jobs</artifactId>
+
+  <!-- The only module that sees both workflows and the activity implementations
+       — it is where they are wired together. Temporal registers workflow
+       CLASSES (stateful, one instance per execution, public no-arg constructor)
+       and activity INSTANCES (stateless, ordinary Spring beans) through
+       separate calls, so workflows never needs to see an implementation.
+
+       This breadth is also a hole: a workflow implemented HERE would compile
+       and silently escape the fence. An ArchUnit rule forbids implementing a
+       @WorkflowInterface outside workflows. -->
+  <dependencies>
+    <dependency>
+      <groupId>haven.loom</groupId>
+      <artifactId>domain</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>haven.loom</groupId>
+      <artifactId>contracts</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>haven.loom</groupId>
+      <artifactId>orchestration</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>haven.loom</groupId>
+      <artifactId>persistence</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>haven.loom</groupId>
+      <artifactId>agent</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>haven.loom</groupId>
+      <artifactId>workflows</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter</artifactId>
+    </dependency>
+    <!-- The worker serves no application traffic; the web stack is here
+         so actuator can expose probes and metrics to the cell. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-actuator</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-registry-prometheus</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-validation</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.temporal</groupId>
+      <artifactId>temporal-sdk</artifactId>
+    </dependency>
+
+    <!-- spring-boot:run starts/waits-for the compose stack itself; the boot
+         plugin auto-excludes docker-compose from the repackaged jar. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-docker-compose</artifactId>
+      <scope>runtime</scope>
+      <optional>true</optional>
+    </dependency>
+
+    <!-- Dispatch: the foundation events platform loom notifies through. Only
+         :jobs talks to it, for the same reason only :jobs talks to Anvil — the
+         notification fires on a case's state change, which is workflow-driven.
+
+         It is built for Spring Boot 3.5 and carries Jackson 2. Both are fine on
+         Boot 4: Boot's BOM still manages jackson-databind, so Jackson 2 arrives
+         with a version and coexists with the Jackson 3 Boot autoconfigures. The
+         one thing it needs is a Jackson 2 ObjectMapper BEAN, which Boot 4 no
+         longer creates — see LegacyJacksonConfig. -->
+    <dependency>
+      <groupId>co.altir.events.api</groupId>
+      <artifactId>events-api-client-spring</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.temporal</groupId>
+      <artifactId>temporal-testing</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.tngtech.archunit</groupId>
+      <artifactId>archunit</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+        <executions>
+          <execution>
+            <goals>
+              <goal>repackage</goal>
+            </goals>
+          </execution>
+        </executions>
+        <configuration>
+          <!-- Same env-var profile delivery as api — see the comment there. -->
+          <environmentVariables>
+            <SPRING_PROFILES_ACTIVE>${run.profiles}</SPRING_PROFILES_ACTIVE>
+          </environmentVariables>
+          <jvmArguments>--enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow -Dspring.output.ansi.enabled=ALWAYS</jvmArguments>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

@@ -1,0 +1,19 @@
+/* Chat beside the activity panel. The panel is hidden below the breakpoint,
+   but the track it occupied is not — an empty 300px column plus a 1fr track
+   that cannot shrink past its longest word overflows a phone and squeezes the
+   chat to a strip. minmax(0, …) lets the chat shrink; the media query drops
+   the track entirely once the panel beside it is gone. */
+.panes {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: var(--mantine-spacing-md);
+}
+
+/* After .panes: a media query adds no specificity. */
+@media (max-width: 48em) {
+  .panes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

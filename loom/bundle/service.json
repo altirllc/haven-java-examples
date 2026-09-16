@@ -1,0 +1,64 @@
+{
+  "id": "loom",
+  "publisher": "haven",
+  "name": "Loom",
+  "description": "Supervises another app's automated decisions: every item Anvil's triager decides gets a case, an agent judges whether the decision was defensible, and anything nobody settles before its deadline raises a notification.",
+  "tagline": "that supervise",
+  "icon": "Eye",
+  "tags": [
+    "supervision",
+    "agent",
+    "ai"
+  ],
+  "visible": false,
+  "mcp": true,
+  "features": [
+    {
+      "id": "AUTONOMOUS_REVIEW",
+      "name": "Autonomous review",
+      "description": "An agent judges each decision and says why it agrees or disputes",
+      "default": true
+    },
+    {
+      "id": "SLA_DEADLINES",
+      "name": "Review deadlines",
+      "description": "A case nobody settles in time lapses instead of going quiet",
+      "default": true
+    },
+    {
+      "id": "PUSH_BACK",
+      "name": "Push back to Anvil",
+      "description": "A disputed decision is flagged upstream so a human sees it again",
+      "default": true
+    },
+    {
+      "id": "NOTIFICATIONS",
+      "name": "Notify through Dispatch",
+      "description": "Raise an escalated or lapsed case to a person",
+      "default": false
+    },
+    {
+      "id": "AUDIT_LOGGING",
+      "name": "Audit logging",
+      "description": "Log all events",
+      "default": true
+    }
+  ],
+  "plan": {
+    "default": "free",
+    "options": {
+      "free": {
+        "name": "Free",
+        "allowance": 10,
+        "unit": "cases",
+        "description": "New cases stop when the free cases are used; the ones already open keep being supervised."
+      },
+      "paid": {
+        "name": "Paid",
+        "allowance": 10,
+        "unit": "cases",
+        "description": "Cases continue — extras are metered."
+      }
+    }
+  }
+}

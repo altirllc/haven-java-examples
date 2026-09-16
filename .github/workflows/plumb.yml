@@ -1,0 +1,81 @@
+name: Build plumb
+
+# haven-java-examples holds more than one app, so every workflow is path-scoped:
+# editing loom must not rebuild and republish plumb.
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'plumb/**'
+      - '.github/workflows/plumb.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'plumb/**'
+  workflow_dispatch:
+    inputs:
+      tag_as_latest:
+        description: 'Tag this build as latest'
+        type: boolean
+        default: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/plumb
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      # The image builds Java inside Docker, but running the build here first
+      # validates and caches it before we spend a push — and plumb's tests are
+      # the fail-open contract, which is the one thing worth failing a build on.
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      - name: Build and test
+        working-directory: plumb
+        run: ./mvnw -B -ntp verify
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PUSH_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || github.event_name == 'workflow_dispatch' || inputs.tag_as_latest == true }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: ./plumb
+          file: ./plumb/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64
+          provenance: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

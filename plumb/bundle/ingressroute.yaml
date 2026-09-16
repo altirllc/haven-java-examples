@@ -1,0 +1,27 @@
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: plumb-strip-prefix
+spec:
+  stripPrefix:
+    prefixes:
+      - /plumb
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: plumb-routes
+spec:
+  entryPoints:
+    - web
+  routes:
+    # One route: the page and the JSON come from the same container, and the
+    # prefix is stripped at the edge — which is exactly why an app calling
+    # another app in-cluster must NOT include it.
+    - match: PathPrefix(`/plumb`)
+      kind: Rule
+      middlewares:
+        - name: plumb-strip-prefix
+      services:
+        - name: plumb-api
+          port: 3000

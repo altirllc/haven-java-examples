@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: loom-api
+spec:
+  type: ClusterIP
+  ports:
+    - port: 3000
+      targetPort: api
+      protocol: TCP
+  selector:
+    app: loom

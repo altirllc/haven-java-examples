@@ -1,0 +1,157 @@
+spring:
+  application:
+    name: loom-api
+  threads:
+    virtual:
+      enabled: true
+  datasource:
+    url: ${POSTGRES_DATABASE_URL}
+    hikari:
+      # Pin the search_path so everything this datasource creates lands in the
+      # app's schema — including Spring AI's chat-memory table, which would
+      # otherwise be created in `public`. House rule: never write to public.
+      schema: loom
+      # Backing services race the app at boot (compose initdb locally, pod
+      # ordering in a cell). Hikari retries the first connection this long —
+      # a bounded wait, then the real error.
+      initialization-fail-timeout: 30000
+  # Wired, deliberately unused — MongoConnectionCheck pings at boot. NOT
+  # spring.data.mongodb.*: those keys are dead in Boot 4 and silently unbound.
+  mongodb:
+    uri: ${MONGODB_URI}
+  jpa:
+    # Liquibase is the single DDL source of truth; Hibernate only checks that
+    # the entities still match it, and kills the boot on drift.
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
+  ai:
+    openai:
+      # The platform model gateway (OpenAI-compatible LiteLLM). Auth is the
+      # tenant's virtual key; ModelsGatewayConfig probes it at boot. Model
+      # names are gateway aliases. Values derive from the models-gateway
+      # block below — the single source both the client and the probe read.
+      base-url: ${models-gateway.endpoint}/v1
+      api-key: ${models-gateway.api-key}
+      chat:
+        options:
+          model: ${models-gateway.chat-model}
+      embedding:
+        options:
+          model: ${models-gateway.embedding-model}
+    chat:
+      memory:
+        repository:
+          jdbc:
+            # Liquibase owns this DDL (002-chat-memory.sql) — the library's unlocked
+            # boot-time initializer raced the jobs process's on fresh tenants.
+            initialize-schema: never
+    mcp:
+      server:
+        # tools arrive via the ToolCallbackProvider bean in McpContext; the
+        # annotation scanner's bean-order-dependent path stays off
+        annotation-scanner:
+          enabled: false
+        name: loom
+        version: 1.0.0
+        protocol: STREAMABLE
+        streamable-http:
+          # Traefik strips /mcp/loom, so the app serves MCP at its own root.
+          mcp-endpoint: /
+  autoconfigure:
+    exclude:
+      # The vector store is wired explicitly against POSTGRES_VECTORS_URL in
+      # VectorStoreConfig. Its autoconfiguration binds to the app's primary
+      # datasource, which would drop vector_store into the `loom` schema of
+      # the app database instead of the vectors database.
+      - org.springframework.ai.vectorstore.pgvector.autoconfigure.PgVectorStoreAutoConfiguration
+
+# ECS JSON to stdout, natively — no logback-spring.xml, no logback-ecs-encoder.
+logging:
+  structured:
+    format:
+      console: ecs
+  level:
+    root: ${LOG_LEVEL:info}
+    # Spring AI's MCP annotation scanner trips harmless early-init warnings
+    # (spring-ai#4694, #6535); drop this when upgrading past 2.0.0.
+    # bracket notation: relaxed binding strips the $ from unbracketed keys
+    '[org.springframework.context.support.PostProcessorRegistrationDelegate$BeanPostProcessorChecker]': error
+
+postgres:
+  vectors-url: ${POSTGRES_VECTORS_URL}
+
+haven:
+  tenant-id: ${HAVEN_TENANT_ID}
+  user: ${HAVEN_USER:dev}
+  role: ${HAVEN_ROLE:member}
+
+# free refuses new items once the allowance is spent; paid continues metered.
+# How long a case may sit unreviewed before the workflow lapses it.
+cases:
+  sla: ${CASE_SLA:24h}
+
+plan:
+  name: ${PLAN:free}
+  free-cases: ${PLAN_FREE_CASES:10}
+
+temporal:
+  address: ${TEMPORAL_ADDRESS}
+  namespace: ${TEMPORAL_NAMESPACE}
+  task-queue: ${TEMPORAL_TASK_QUEUE:loom}
+
+# Display-only here; the daemon itself lives in jobs.
+agent:
+  interval: ${AGENT_INTERVAL:60s}
+
+models-gateway:
+  endpoint: ${MODELS_GATEWAY_ENDPOINT:http://models-litellm.default:4000}
+  api-key: ${MODELS_GATEWAY_API_KEY}
+  chat-model: ${MODELS_CHAT_MODEL:chat-with-haven}
+  embedding-model: ${MODELS_EMBEDDING_MODEL:text-embedding-1024}
+
+# api-only: the jobs worker has no S3.
+storage:
+  s3:
+    endpoint: ${STORAGE_S3_ENDPOINT}
+    access-key: ${STORAGE_S3_ACCESS_KEY}
+    secret-key: ${STORAGE_S3_SECRET_KEY}
+    bucket: ${STORAGE_S3_BUCKET}
+    use-ssl: ${STORAGE_S3_USE_SSL:false}
+
+# The MCP server validates inbound Zitadel JWTs itself (resource-server model).
+# Both blank denies every MCP request, so local dev boots closed rather than
+# silently exposing an unauthenticated surface.
+zitadel:
+  issuer: ${ZITADEL_ISSUER:}
+  mcp-audience: ${ZITADEL_MCP_AUDIENCE:}
+
+# Actuator is the health and metrics surface. The probe split is deliberate:
+# liveness carries NO dependency checks — a Postgres blip must not restart every
+# pod — while readiness includes them, so a pod that cannot reach its database is
+# taken out of service instead of accepting traffic it cannot serve.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+      group:
+        liveness:
+          include: livenessState
+        # Contributor IDs — Boot FAILS STARTUP if a group names one that does not
+        # exist (Mongo's is `mongo`, NOT `mongodb`). Mongo stays out of readiness
+        # PERMANENTLY, even once Mongo features exist: with one replica, failing
+        # readiness is a full outage, so a secondary datastore blip must degrade
+        # its own features, not take down the app. Only Postgres, which everything
+        # depends on, belongs here.
+        readiness:
+          include: readinessState,db

@@ -1,0 +1,98 @@
+name: Build loom api
+
+# haven-java-examples holds more than one app, and loom holds more than one
+# deployable. Each workflow is scoped to the modules its image actually
+# contains, so editing the frontend does not rebuild and republish the backend.
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'loom/backend/domain/**'
+      - 'loom/backend/contracts/**'
+      - 'loom/backend/orchestration/**'
+      - 'loom/backend/persistence/**'
+      - 'loom/backend/agent/**'
+      - 'loom/backend/api/**'
+      - 'loom/backend/pom.xml'
+      - 'loom/backend/.mvn/**'
+      - 'loom/backend/mvnw'
+      - '.github/workflows/loom-api.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'loom/backend/**'
+  workflow_dispatch:
+    inputs:
+      tag_as_latest:
+        description: 'Tag this build as latest'
+        type: boolean
+        default: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/loom-api
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      # The Dispatch client is published to Altir's Artifactory, so the reactor
+      # needs credentials even for modules that do not use it — the parent pom
+      # declares the repository for everything under it.
+      - name: Configure Maven credentials
+        run: |
+          mkdir -p ~/.m2
+          printf '%s' "${{ secrets.MAVEN_SETTINGS }}" > ~/.m2/settings.xml
+
+      # The image builds Java inside Docker, but running the build here first
+      # validates and caches it before we spend a push — and it is where the
+      # determinism fence and the tests actually run.
+      - name: Build and test
+        working-directory: loom/backend
+        run: ./mvnw -B -ntp -pl api -am verify
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PUSH_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || github.event_name == 'workflow_dispatch' || inputs.tag_as_latest == true }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: ./loom/backend
+          file: ./loom/backend/api/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64
+          provenance: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

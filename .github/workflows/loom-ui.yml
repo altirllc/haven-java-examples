@@ -1,0 +1,84 @@
+name: Build loom ui
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'loom/frontend/**'
+      - '.github/workflows/loom-ui.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'loom/frontend/**'
+  workflow_dispatch:
+    inputs:
+      tag_as_latest:
+        description: 'Tag this build as latest'
+        type: boolean
+        default: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/loom-ui
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: loom/frontend/package-lock.json
+
+      - name: Install
+        working-directory: loom/frontend
+        run: npm ci --no-audit --no-fund
+
+      # `check` is lint + knip. knip is the one that catches a component left
+      # behind by a rename, which is exactly what a reshaped app accumulates.
+      - name: Check and build
+        working-directory: loom/frontend
+        run: |
+          npm run check
+          npm run build
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PUSH_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || github.event_name == 'workflow_dispatch' || inputs.tag_as_latest == true }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: ./loom/frontend
+          file: ./loom/frontend/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64
+          provenance: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

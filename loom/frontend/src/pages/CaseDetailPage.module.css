@@ -1,0 +1,30 @@
+/* Description beside the metadata rail. The rail is a fixed 300px, which only
+   works while there is a row wide enough to spare it — below the breakpoint it
+   starves the description to one word per line. */
+.split {
+  display: flex;
+  align-items: stretch;
+  gap: var(--mantine-spacing-xl);
+}
+
+.meta {
+  flex: 0 0 300px;
+  padding-left: 20px;
+  border-left: 1px solid var(--mantine-color-default-border);
+}
+
+/* Declared after .split and .meta: a media query adds no specificity. Stacked,
+   the rule that separated the columns becomes the rule above the block. */
+@media (max-width: 48em) {
+  .split {
+    flex-direction: column;
+    gap: var(--mantine-spacing-md);
+  }
+  .meta {
+    flex: 1 1 auto;
+    padding-left: 0;
+    border-left: 0;
+    padding-top: var(--mantine-spacing-md);
+    border-top: 1px solid var(--mantine-color-default-border);
+  }
+}

@@ -55,9 +55,21 @@ jobs:
       # needs credentials even for modules that do not use it — the parent pom
       # declares the repository for everything under it.
       - name: Configure Maven credentials
+        env:
+          # Through env, not inline: the value is XML with quotes in it, and an
+          # inline expansion would be pasted into the shell source.
+          MAVEN_SETTINGS: ${{ secrets.MAVEN_SETTINGS }}
         run: |
+          # Refuse by name when the secret is absent. Writing the empty string
+          # produces a settings.xml Maven cannot parse, and the resulting
+          # "Non-readable settings: input contained no data" sends whoever reads
+          # it to debug Maven configuration instead of adding a secret.
+          if [ -z "$MAVEN_SETTINGS" ]; then
+            echo "::error::MAVEN_SETTINGS is not set. It must carry a settings.xml with a <server> entry for id fn-libs-release-local — Altir's Artifactory serves the Dispatch client and rejects anonymous reads (401)."
+            exit 1
+          fi
           mkdir -p ~/.m2
-          printf '%s' "${{ secrets.MAVEN_SETTINGS }}" > ~/.m2/settings.xml
+          printf '%s' "$MAVEN_SETTINGS" > ~/.m2/settings.xml
 
       # The image builds Java inside Docker, but running the build here first
       # validates and caches it before we spend a push — and it is where the

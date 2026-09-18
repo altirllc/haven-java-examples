@@ -147,7 +147,7 @@ public class CaseService {
             return Optional.empty();
         }
         CaseEntity entity = found.get();
-        boolean decisionIsNew = decision != null && !toJson(decision).equals(entity.getAnvilDecision());
+        boolean decisionIsNew = decision != null && !sameJson(toJson(decision), entity.getAnvilDecision());
 
         cases.syncFromAnvil(id, title, anvilStatus, decision == null ? null : toJson(decision), now());
 
@@ -362,6 +362,29 @@ public class CaseService {
 
     private String toJson(Object value) {
         return json.writeValueAsString(value);
+    }
+
+    /**
+     * Whether two jsonb payloads mean the same thing.
+     *
+     * Deliberately NOT a string comparison. One side is what Jackson just
+     * produced; the other came back out of a `jsonb` column, and Postgres
+     * rewrites jsonb on the way in — it sorts object keys and drops
+     * insignificant whitespace. The two texts therefore differ for a decision
+     * that has not changed at all, and the only place that shows up is against
+     * a real Postgres. Comparing parsed trees asks the question we actually
+     * mean: is this the same decision?
+     */
+    private boolean sameJson(String left, String right) {
+        if (left == null || right == null) {
+            return left == null && right == null;
+        }
+        try {
+            return json.readTree(left).equals(json.readTree(right));
+        } catch (RuntimeException malformed) {
+            // A column we cannot parse is not evidence of sameness.
+            return false;
+        }
     }
 
     private <T> T readJson(String value, Class<T> type) {

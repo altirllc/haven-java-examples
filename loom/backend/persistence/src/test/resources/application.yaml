@@ -12,3 +12,9 @@ spring:
 plan:
   name: ${PLAN:free}
   free-cases: ${PLAN_FREE_CASES:10}
+
+# CaseProperties is @Validated with a @NotNull sla and is picked up by the
+# configuration-properties scan, so the context refuses to start without this
+# even though the test passes its own SLA per case. Mirrors the app configs.
+cases:
+  sla: ${CASE_SLA:24h}

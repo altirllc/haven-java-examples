@@ -70,6 +70,12 @@ jobs:
           fi
           mkdir -p ~/.m2
           printf '%s' "$MAVEN_SETTINGS" > ~/.m2/settings.xml
+          # The image build needs the same file, and it has to arrive as a FILE.
+          # build-push-action parses its `secrets:` input as one KEY=VALUE per
+          # LINE, so a multi-line XML value silently becomes just its first line
+          # — and every remaining line is read as another secret id. Maven then
+          # fails with "no more data available START_DOCUMENT seen".
+          cp ~/.m2/settings.xml "$RUNNER_TEMP/maven-settings.xml"
 
       # The image builds Java inside Docker, but running the build here first
       # validates and caches it before we spend a push — and it is where the
@@ -111,5 +117,7 @@ jobs:
           cache-to: type=gha,mode=max
           # The one image that resolves the Dispatch client during its own
           # build. A secret, not a build arg: an arg lands in the image history.
-          secrets: |
-            maven_settings=${{ secrets.MAVEN_SETTINGS }}
+          # secret-files, not secrets: the value is multi-line XML — see the
+          # credentials step above.
+          secret-files: |
+            maven_settings=${{ runner.temp }}/maven-settings.xml

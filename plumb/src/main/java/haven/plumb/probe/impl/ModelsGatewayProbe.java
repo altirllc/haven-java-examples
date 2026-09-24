@@ -99,8 +99,13 @@ public class ModelsGatewayProbe implements Probe {
                         properties.chatModel(),
                         "messages",
                         List.of(java.util.Map.of("role", "user", "content", "Reply with the single word: pong")),
-                        "max_tokens",
-                        16)),
+                        // max_completion_tokens, not max_tokens: in a cell the chat
+                        // alias is a GPT-5.x reasoning model, which answers 400 to
+                        // max_tokens. The cap also covers the hidden reasoning, so
+                        // a tight one comes back as an empty reply — 1024 leaves
+                        // room for both (haven-recall learned the same).
+                        "max_completion_tokens",
+                        1024)),
                 "Authorization",
                 auth);
         if (!chat.ok()) {

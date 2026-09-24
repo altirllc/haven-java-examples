@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Test;
 class PageTest {
 
     private static final PlumbProperties SETTINGS =
-            new PlumbProperties("acme", Duration.ofMinutes(1), Duration.ofSeconds(2), Duration.ofSeconds(5), true);
+            new PlumbProperties("acme", Duration.ofMinutes(1), Duration.ofSeconds(2), Duration.ofSeconds(5));
 
     @Test
     void a_hostile_failure_message_cannot_inject_markup() {

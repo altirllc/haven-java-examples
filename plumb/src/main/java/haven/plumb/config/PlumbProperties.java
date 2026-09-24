@@ -20,10 +20,4 @@ public record PlumbProperties(
         /** How long a whole sweep may take before the stragglers are called failed. */
         Duration probeTimeout,
         /** Grace before the first sweep, so the page is already populated on the first view. */
-        Duration startupDelay,
-        /**
-         * Whether the Temporal probe starts a real workflow rather than only
-         * describing the namespace. On by default — a namespace lookup proves the
-         * frontend is up and says nothing about whether work can actually run.
-         */
-        boolean deep) {}
+        Duration startupDelay) {}

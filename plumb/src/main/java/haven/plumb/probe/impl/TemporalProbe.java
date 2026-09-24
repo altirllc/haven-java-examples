@@ -1,6 +1,5 @@
 package haven.plumb.probe.impl;
 
-import haven.plumb.config.PlumbProperties;
 import haven.plumb.config.TemporalProperties;
 import haven.plumb.probe.Probe;
 import haven.plumb.probe.ProbeGroup;
@@ -32,12 +31,10 @@ public class TemporalProbe implements Probe {
     private static final Duration EXECUTION_TIMEOUT = Duration.ofSeconds(20);
 
     private final TemporalProperties properties;
-    private final PlumbProperties plumb;
     private final TemporalSeam seam;
 
-    public TemporalProbe(TemporalProperties properties, PlumbProperties plumb, TemporalSeam seam) {
+    public TemporalProbe(TemporalProperties properties, TemporalSeam seam) {
         this.properties = properties;
-        this.plumb = plumb;
         this.seam = seam;
     }
 
@@ -58,7 +55,11 @@ public class TemporalProbe implements Probe {
 
     @Override
     public String proves() {
-        return "the tenant namespace exists and a worker in this process runs a workflow end to end";
+        // With deep off no workflow runs, and a row that overstates what it
+        // checked is worse than one that checks less.
+        return properties.deep()
+                ? "the tenant namespace exists and a worker in this process runs a workflow end to end"
+                : "the tenant namespace exists and reports its retention";
     }
 
     @Override
@@ -69,7 +70,7 @@ public class TemporalProbe implements Probe {
 
         TemporalSeam.Session session;
         try {
-            session = seam.connect();
+            session = seam.connect(properties.deep());
         } catch (RuntimeException unreachable) {
             seam.discard();
             throw unreachable;
@@ -83,12 +84,12 @@ public class TemporalProbe implements Probe {
                             .build());
             String retention = namespace.getConfig().getWorkflowExecutionRetentionTtl().getSeconds() / 86400 + "d";
 
-            if (!plumb.deep()) {
+            if (!properties.deep()) {
                 return Outcome.ok(
                         "namespace " + properties.namespace() + " exists (deep mode off)",
                         "address: " + properties.address(),
                         "retention: " + retention,
-                        "set PLUMB_DEEP=true to run a real workflow");
+                        "set DEEP_TEMPORAL_PROBE=true to run a real workflow");
             }
 
             String token = UUID.randomUUID().toString();

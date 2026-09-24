@@ -25,6 +25,11 @@ import org.springframework.stereotype.Component;
  * poller: creating one every minute would leave a trail of pollers on the task
  * queue. A failed connect discards the cache so the next sweep retries cleanly
  * instead of reusing half-built state.
+ *
+ * The worker is also only started when the deep probe needs one. A poller is a
+ * standing long-poll against the tenant's frontend, so starting it to describe a
+ * namespace would keep an idle connection open for the life of every pod in the
+ * fleet, for work that is never dispatched.
  */
 @Component
 public class TemporalSeam {
@@ -39,13 +44,24 @@ public class TemporalSeam {
         this.properties = properties;
     }
 
-    /** The live connection plus a started worker on this app's task queue. */
+    /**
+     * The live connection, plus a started worker on this app's task queue when
+     * one was asked for. {@code factory} is null on the shallow path — nothing
+     * but the deep probe dispatches work, and only it pays for a poller.
+     */
     public record Session(WorkflowServiceStubs stubs, WorkflowClient client, WorkerFactory factory) {}
 
-    public synchronized Session connect() {
-        if (session != null) {
+    /**
+     * @param withWorker start a poller on the task queue. Describing the
+     *     namespace does not need one; running a workflow does.
+     */
+    public synchronized Session connect(boolean withWorker) {
+        if (session != null && (session.factory() != null || !withWorker)) {
             return session;
         }
+        // Cached shallow, now asked for deep: rebuild rather than hand back a
+        // session whose workflow would never be picked up.
+        discard();
         WorkflowServiceStubs stubs = null;
         try {
             // Connected, not lazy: the probe wants a definitive answer now, and
@@ -61,13 +77,16 @@ public class TemporalSeam {
                     WorkflowClientOptions.newBuilder()
                             .setNamespace(properties.namespace())
                             .build());
-            WorkerFactory factory = WorkerFactory.newInstance(client);
-            Worker worker = factory.newWorker(properties.taskQueue());
-            worker.registerWorkflowImplementationTypes(PingWorkflowImpl.class);
-            worker.registerActivitiesImplementations(new PingActivitiesImpl());
-            factory.start();
-            log.info("Temporal worker polling task queue '{}' in namespace '{}'",
-                    properties.taskQueue(), properties.namespace());
+            WorkerFactory factory = null;
+            if (withWorker) {
+                factory = WorkerFactory.newInstance(client);
+                Worker worker = factory.newWorker(properties.taskQueue());
+                worker.registerWorkflowImplementationTypes(PingWorkflowImpl.class);
+                worker.registerActivitiesImplementations(new PingActivitiesImpl());
+                factory.start();
+                log.info("Temporal worker polling task queue '{}' in namespace '{}'",
+                        properties.taskQueue(), properties.namespace());
+            }
             session = new Session(stubs, client, factory);
             return session;
         } catch (RuntimeException failed) {
@@ -83,7 +102,9 @@ public class TemporalSeam {
         Session current = session;
         session = null;
         if (current != null) {
-            current.factory().shutdown();
+            if (current.factory() != null) {
+                current.factory().shutdown();
+            }
             closeQuietly(current.stubs());
         }
     }

@@ -14,8 +14,14 @@
     {
       "id": "DEEP_TEMPORAL_PROBE",
       "name": "Deep Temporal probe",
-      "description": "Run a real workflow rather than only describing the namespace",
-      "default": true
+      "description": "Run a real workflow each sweep rather than only describing the namespace",
+      "default": false
+    },
+    {
+      "id": "DEEP_LITELLM_PROBE",
+      "name": "Deep LiteLLM probe",
+      "description": "Spend a real chat and embedding inference each sweep to prove the aliases answer. Bills a metered vendor every 60s.",
+      "default": false
     }
   ]
 }

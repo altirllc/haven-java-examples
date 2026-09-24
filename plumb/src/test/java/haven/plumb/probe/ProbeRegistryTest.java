@@ -19,7 +19,7 @@ import org.junit.jupiter.api.Test;
 class ProbeRegistryTest {
 
     private static final PlumbProperties SETTINGS =
-            new PlumbProperties("test", Duration.ofMinutes(1), Duration.ofSeconds(2), Duration.ofSeconds(5), true);
+            new PlumbProperties("test", Duration.ofMinutes(1), Duration.ofSeconds(2), Duration.ofSeconds(5));
 
     private static ProbeRegistry registryOf(Probe... probes) {
         return new ProbeRegistry(List.of(probes), List.of(), SETTINGS);

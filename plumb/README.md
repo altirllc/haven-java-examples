@@ -14,9 +14,9 @@ postgres.records  ok    schema plumb migrated, round trip verified
 postgres.vectors  ok    pgvector 0.8.6 answered a 1024-dimension kNN query
 mongodb           ok    database plumb, round trip verified
 s3                ok    bucket acme, round trip verified
-models.gateway    ok    both aliases answered
+models.gateway    ok    both aliases are served
 identity.zitadel  ok    issuer reachable and publishing 2 signing key(s)
-temporal          ok    namespace acme, workflow round trip verified
+temporal          ok    namespace acme exists (deep mode off)
 ```
 
 ## The one rule
@@ -47,8 +47,8 @@ proves the network and nothing an application depends on.
 | `postgres.vectors` | the vectors **database** (not schema) → `vector` extension → 1024-dim kNN query |
 | `mongodb` | ping → insert, find, delete with the tenant credential |
 | `s3` | bucket exists → put, get, list, delete under `plumb/` (path-style addressing) |
-| `temporal` | `DescribeNamespace`, then a real workflow → activity → echo on task queue `plumb` |
-| `models.gateway` | `GET /v1/models` → chat completion → embedding, asserting the 1024 width |
+| `temporal` | `DescribeNamespace` and its retention. With `DEEP_TEMPORAL_PROBE=true`, also a real workflow → activity → echo on task queue `plumb` |
+| `models.gateway` | `GET /v1/models`: the key is accepted and both aliases are served. With `DEEP_LITELLM_PROBE=true`, also a chat completion → embedding, asserting the 1024 width |
 | `identity.zitadel` | OIDC discovery → the issuer agrees with its own name → JWKS is non-empty |
 | `sibling.*` | each configured app answers in-cluster; a host that does not resolve is **skipped**, not red |
 
@@ -99,8 +99,13 @@ Off by default, because it is the one seam that needs a credential:
 ```bash
 cp .env.example .env          # set OPENAI_API_KEY
 docker compose --profile models up -d
-MODELS_GATEWAY_ENDPOINT=http://localhost:4000 MODELS_GATEWAY_API_KEY=sk-plumb-local ./mvnw spring-boot:run
+DEEP_LITELLM_PROBE=true \
+  MODELS_GATEWAY_ENDPOINT=http://localhost:4000 MODELS_GATEWAY_API_KEY=sk-plumb-local ./mvnw spring-boot:run
 ```
+
+`DEEP_LITELLM_PROBE=true` is the point of running LiteLLM locally at all: without
+it the probe stops at the alias list and never calls a model. In a cell it stays
+off, because the sweep runs every 60s against a metered vendor.
 
 LiteLLM is the same software the platform runs in `haven-models`, configured with
 the same two **aliases** — `chat-with-haven` and `text-embedding-1024` — so the
@@ -148,14 +153,15 @@ What the bundle injects, where it comes from, and which probe covers it.
 | `TEMPORAL_ADDRESS` | `workflows-temporal.default:7233` | `temporal` |
 | `TEMPORAL_NAMESPACE` | pod label `haven.tenant` — one namespace per tenant | `temporal` |
 | `TEMPORAL_TASK_QUEUE` | the app's own name | `temporal` |
+| `DEEP_TEMPORAL_PROBE` | run a real workflow, not just a namespace lookup — **false** | `temporal` |
 | `MODELS_GATEWAY_ENDPOINT` / `_API_KEY` | `tenant-models-secret` | `models.gateway` |
 | `MODELS_CHAT_MODEL` / `_EMBEDDING_MODEL` | gateway **aliases**, not vendor models | `models.gateway` |
+| `DEEP_LITELLM_PROBE` | spend a real inference per sweep — **false** | `models.gateway` |
 | `ZITADEL_ISSUER` / `ZITADEL_MCP_AUDIENCE` | `tenant-zitadel-secret` | `identity.zitadel` |
 
 plumb's own settings: `PLUMB_INTERVAL` (60s), `PLUMB_PROBE_TIMEOUT` (20s),
-`PLUMB_STARTUP_DELAY` (5s), `PLUMB_DEEP` (true — run a real workflow),
-`POSTGRES_SCHEMA` (plumb), `MONGODB_COLLECTION` (plumb), `STORAGE_S3_PREFIX`
-(plumb/).
+`PLUMB_STARTUP_DELAY` (5s), `POSTGRES_SCHEMA` (plumb), `MONGODB_COLLECTION`
+(plumb), `STORAGE_S3_PREFIX` (plumb/).
 
 > The platform docs in `haven-docs` are behind the code on several of these —
 > they still name `postgres-secret`, `haven-azure-credentials` and `models-vllm`.

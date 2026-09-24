@@ -23,8 +23,6 @@ plumb:
   interval: ${PLUMB_INTERVAL:60s}
   probe-timeout: ${PLUMB_PROBE_TIMEOUT:20s}
   startup-delay: ${PLUMB_STARTUP_DELAY:5s}
-  # Run a real workflow rather than only describing the namespace.
-  deep: ${PLUMB_DEEP:true}
 
 # tenant-postgres-secret. Two databases on the tenant's own instance: the
 # records database apps put their schema in, and the vectors database carrying
@@ -46,6 +44,10 @@ temporal:
   address: ${TEMPORAL_ADDRESS:}
   namespace: ${TEMPORAL_NAMESPACE:}
   task-queue: ${TEMPORAL_TASK_QUEUE:plumb}
+  # Run a real workflow rather than only describing the namespace. Off: the
+  # sweep runs every 60s, and that is an execution a minute for a fact that
+  # only changes when Temporal does.
+  deep: ${DEEP_TEMPORAL_PROBE:false}
 
 # tenant-s3-secret. The bucket is the tenant's and shared: own a prefix, never
 # the root.
@@ -66,6 +68,9 @@ models-gateway:
   chat-model: ${MODELS_CHAT_MODEL:chat-with-haven}
   embedding-model: ${MODELS_EMBEDDING_MODEL:text-embedding-1024}
   embedding-dimensions: ${MODELS_EMBEDDING_DIMENSIONS:1024}
+  # Spend a real inference per sweep. Off: the alias list already proves the key
+  # and the east-west path, and the sweep runs every 60s against a metered vendor.
+  deep: ${DEEP_LITELLM_PROBE:false}
 
 # tenant-zitadel-secret.
 zitadel:

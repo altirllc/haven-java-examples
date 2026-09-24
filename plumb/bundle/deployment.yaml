@@ -43,6 +43,12 @@ spec:
             - secretRef:
                 name: tenant-models-secret
                 optional: true
+            # The feature toggles from service.json land here. Without this
+            # mount the console's switches render and write a ConfigMap that
+            # nothing reads, so flipping one appears to do nothing.
+            - configMapRef:
+                name: plumb-config
+                optional: true
           env:
             - name: SPRING_PROFILES_ACTIVE
               value: "production"

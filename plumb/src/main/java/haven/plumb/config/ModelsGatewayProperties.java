@@ -13,7 +13,19 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  */
 @ConfigurationProperties(prefix = "models-gateway")
 public record ModelsGatewayProperties(
-        String endpoint, String apiKey, String chatModel, String embeddingModel, int embeddingDimensions) {
+        String endpoint,
+        String apiKey,
+        String chatModel,
+        String embeddingModel,
+        int embeddingDimensions,
+        /**
+         * Spend a real inference to prove the aliases resolve, rather than only
+         * that the gateway lists them. Off by default: the sweep runs every 60s,
+         * so a deep probe bills a metered third party 1,440 chat completions and
+         * 1,440 embeddings per tenant per day, forever, to re-prove a fact that
+         * only changes when the gateway is reconfigured.
+         */
+        boolean deep) {
 
     public boolean configured() {
         return Values.allSet(endpoint, apiKey);

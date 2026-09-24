@@ -23,7 +23,7 @@ class PageTest {
         ProbeRegistry registry = registryOf(() -> Probe.Outcome.fail("<script>alert(1)</script>", "a\"b"));
         registry.runAll();
 
-        String html = new Page(registry, SETTINGS).render();
+        String html = new Page(registry, SETTINGS).render("/");
 
         assertThat(html).doesNotContain("<script>alert(1)</script>");
         assertThat(html).contains("&lt;script&gt;alert(1)&lt;/script&gt;");
@@ -34,9 +34,18 @@ class PageTest {
     void the_page_renders_before_the_first_sweep() {
         ProbeRegistry registry = registryOf(() -> Probe.Outcome.ok("fine"));
 
-        String html = new Page(registry, SETTINGS).render();
+        String html = new Page(registry, SETTINGS).render("/");
 
         assertThat(html).contains("acme").contains("not run yet").contains("last run never");
+    }
+
+    @Test
+    void run_all_posts_inside_the_app_whatever_url_the_page_was_opened_at() {
+        // Opened at /plumb (no trailing slash), a bare relative action resolves
+        // to /run — outside the app. The base anchors it to /plumb/run.
+        String html = new Page(registryOf(() -> Probe.Outcome.ok("fine")), SETTINGS).render("/plumb/");
+
+        assertThat(html).contains("<base href=\"/plumb/\">").contains("action=\"run\"");
     }
 
     private ProbeRegistry registryOf(Body body) {

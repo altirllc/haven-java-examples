@@ -91,11 +91,19 @@ public class Page {
         this.properties = properties;
     }
 
-    public String render() {
+    /**
+     * @param basePath where the page lives as the browser sees it, from
+     *     {@link BasePath}. It anchors the form's relative action, so "Run all"
+     *     posts inside the app whether or not the URL has a trailing slash.
+     */
+    public String render(String basePath) {
         ProbeRegistry.Summary summary = registry.summary();
         StringBuilder html = new StringBuilder(8_192);
 
         html.append("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">")
+                .append("<base href=\"")
+                .append(escape(basePath))
+                .append("\">")
                 .append("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">")
                 .append("<title>plumb")
                 .append(Values.isSet(properties.tenantId()) ? " &middot; " + escape(properties.tenantId()) : "")

@@ -9,7 +9,7 @@
     "diagnostics",
     "platform"
   ],
-  "visible": false,
+  "visible": true,
   "features": [
     {
       "id": "DEEP_TEMPORAL_PROBE",

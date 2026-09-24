@@ -10,7 +10,7 @@
     "agent",
     "ai"
   ],
-  "visible": false,
+  "visible": true,
   "mcp": true,
   "features": [
     {

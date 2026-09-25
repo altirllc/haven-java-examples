@@ -13,6 +13,8 @@ identity          ok    tenant acme
 postgres.records  ok    schema plumb migrated, round trip verified
 postgres.vectors  ok    pgvector 0.8.6 answered a 1024-dimension kNN query
 mongodb           ok    database plumb, round trip verified
+neo4j             ok    round trip verified on bolt://neo4j:7687
+valkey            ok    valkey:6379, round trip verified
 s3                ok    bucket acme, round trip verified
 models.gateway    ok    both aliases are served
 identity.zitadel  ok    issuer reachable and publishing 2 signing key(s)
@@ -46,6 +48,8 @@ proves the network and nothing an application depends on.
 | `postgres.records` | connect → advisory lock → `CREATE SCHEMA` → Liquibase → insert, select, delete |
 | `postgres.vectors` | the vectors **database** (not schema) → `vector` extension → 1024-dim kNN query |
 | `mongodb` | ping → insert, find, delete with the tenant credential |
+| `neo4j` | connectivity → create and read back a node **inside a transaction it rolls back** — proves the write grant, commits nothing |
+| `valkey` | ping → setex, get, del a key under `plumb:` |
 | `s3` | bucket exists → put, get, list, delete under `plumb/` (path-style addressing) |
 | `temporal` | `DescribeNamespace` and its retention. With `DEEP_TEMPORAL_PROBE=true`, also a real workflow → activity → echo on task queue `plumb` |
 | `models.gateway` | `GET /v1/models`: the key is accepted and both aliases are served. With `DEEP_LITELLM_PROBE=true`, also a chat completion → embedding, asserting the 1024 width |
@@ -149,6 +153,9 @@ What the bundle injects, where it comes from, and which probe covers it.
 | `POSTGRES_DATABASE_URL` / `POSTGRES_VECTORS_URL` | composed in the bundle → `postgres:5432` | records, vectors |
 | `MONGODB_USERNAME` / `_PASSWORD` | `tenant-mongodb-secret` | `mongodb` |
 | `MONGODB_URI` | composed in the bundle → `mongodb:27017` | `mongodb` |
+| `NEO4J_USERNAME` / `_PASSWORD` | `tenant-neo4j-secret` | `neo4j` |
+| `NEO4J_URI` | set in the bundle → `bolt://neo4j:7687` | `neo4j` |
+| `REDIS_HOST` / `REDIS_PORT` | set in the bundle → `valkey:6379`, no credential | `valkey` |
 | `STORAGE_S3_ENDPOINT` / `_ACCESS_KEY` / `_SECRET_KEY` / `_BUCKET` | `tenant-s3-secret` | `s3` |
 | `TEMPORAL_ADDRESS` | `workflows-temporal.default:7233` | `temporal` |
 | `TEMPORAL_NAMESPACE` | pod label `haven.tenant` — one namespace per tenant | `temporal` |
@@ -161,7 +168,8 @@ What the bundle injects, where it comes from, and which probe covers it.
 
 plumb's own settings: `PLUMB_INTERVAL` (60s), `PLUMB_PROBE_TIMEOUT` (20s),
 `PLUMB_STARTUP_DELAY` (5s), `POSTGRES_SCHEMA` (plumb), `MONGODB_COLLECTION`
-(plumb), `STORAGE_S3_PREFIX` (plumb/).
+(plumb), `STORAGE_S3_PREFIX` (plumb/), `NEO4J_DATABASE` (blank = the server's
+default), `REDIS_KEY_PREFIX` (plumb:).
 
 > The platform docs in `haven-docs` are behind the code on several of these —
 > they still name `postgres-secret`, `haven-azure-credentials` and `models-vllm`.

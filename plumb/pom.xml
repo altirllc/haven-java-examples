@@ -82,6 +82,19 @@
       <groupId>org.mongodb</groupId>
       <artifactId>mongodb-driver-sync</artifactId>
     </dependency>
+
+    <dependency>
+      <groupId>org.neo4j.driver</groupId>
+      <artifactId>neo4j-java-driver</artifactId>
+    </dependency>
+
+    <!-- Valkey speaks RESP, so a Redis client is the client. Jedis rather than
+         Lettuce to match the sync drivers everywhere else here: a probe is a
+         cold path that wants a definitive answer, not a reactive one. -->
+    <dependency>
+      <groupId>redis.clients</groupId>
+      <artifactId>jedis</artifactId>
+    </dependency>
     <dependency>
       <groupId>software.amazon.awssdk</groupId>
       <artifactId>s3</artifactId>

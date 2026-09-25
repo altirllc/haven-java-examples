@@ -1,6 +1,6 @@
 # The seams, as containers.
 #
-# This file is a claim: these five containers are what a tenant vCluster gives a
+# This file is a claim: these containers are what a tenant vCluster gives a
 # Haven application, reduced to one machine. The service NAMES deliberately match
 # the in-cluster hostnames (postgres, mongodb, temporal) so the only difference
 # between running here and running in a cell is which values land in the env.
@@ -56,6 +56,32 @@ services:
       - mongodb-config:/data/configdb
     healthcheck:
       test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  neo4j:
+    image: neo4j:5.26
+    ports:
+      - "${PLUMB_NEO4J_PORT:-7687}:7687"
+    environment:
+      # Same shape as the cell: a credential the app must actually use, not auth
+      # disabled — a probe against an open Neo4j proves nothing about the grant.
+      NEO4J_AUTH: neo4j/plumblocal
+    volumes:
+      - neo4j-data:/data
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "plumblocal", "RETURN 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  valkey:
+    image: valkey/valkey:9.1
+    ports:
+      - "${PLUMB_VALKEY_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -183,5 +209,6 @@ configs:
 volumes:
   postgres-data:
   mongodb-data:
+  neo4j-data:
   mongodb-config:
   seaweedfs-data:

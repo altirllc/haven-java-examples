@@ -24,6 +24,17 @@ postgres:
 mongo:
   uri: mongodb://mongo:mongo@192.168.1.100:27018/plumb?authSource=admin
 
+neo4j:
+  uri: bolt://192.168.1.100:7688
+  username: neo4j
+  # Matches NEO4J_AUTH in docker-compose. A credential, not auth
+  # disabled: a probe against an open Neo4j proves nothing about the grant.
+  password: plumblocal
+
+valkey:
+  host: 192.168.1.100
+  port: 6380
+
 temporal:
   address: 192.168.1.100:7233
   namespace: default

@@ -18,6 +18,16 @@ spec:
       labels:
         app: plumb
     spec:
+      # Kubernetes injects ~8 Docker-link-era env vars per Service in the
+      # namespace, and they outrank application.yaml. `valkey` is a Service
+      # here, so VALKEY_PORT would arrive as "tcp://10.2.14.171:6379" and bind
+      # over valkey.port. ValkeyProperties takes the port as a String so that
+      # cannot kill the boot; this line is why the row stays HONEST rather than
+      # reporting the cache as misconfigured. Both are needed — keep them.
+      # Links also only inject for Services that existed before the pod started,
+      # so without this the behaviour differs between a fresh install and a
+      # restart, which is the worst kind of bug to chase.
+      enableServiceLinks: false
       securityContext:
         seccompProfile:
           type: RuntimeDefault
@@ -112,6 +122,29 @@ spec:
                   optional: true
             - name: MONGODB_URI
               value: "mongodb://$(MONGO_USERNAME):$(MONGO_PASSWORD)@mongodb:27017/plumb?authSource=admin"
+            # Neo4j, on the bolt port. Every tenant is given one in the baseline
+            # stack; no catalog bundle consumed it before this probe, so this is
+            # the first thing that checks a tenant's graph database works.
+            - name: NEO4J_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: tenant-neo4j-secret
+                  key: NEO4J_USERNAME
+                  optional: true
+            - name: NEO4J_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tenant-neo4j-secret
+                  key: NEO4J_PASSWORD
+                  optional: true
+            - name: NEO4J_URI
+              value: "bolt://neo4j:7687"
+            # The cache carries no credential — reachable inside this vCluster
+            # and nowhere else. REDIS_* is the platform's existing name for it.
+            - name: REDIS_HOST
+              value: "valkey"
+            - name: REDIS_PORT
+              value: "6379"
             # Model gateway aliases name the ROLE, not the vendor model.
             - name: MODELS_CHAT_MODEL
               value: "chat-with-haven"

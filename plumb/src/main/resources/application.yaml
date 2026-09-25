@@ -39,6 +39,22 @@ mongo:
   uri: ${MONGODB_URI:}
   collection: ${MONGODB_COLLECTION:plumb}
 
+# tenant-neo4j-secret. Every tenant gets Neo4j in the baseline stack; the URI is
+# the in-vCluster service on the bolt port.
+neo4j:
+  uri: ${NEO4J_URI:}
+  username: ${NEO4J_USERNAME:}
+  password: ${NEO4J_PASSWORD:}
+  # Blank means the server's default database, which is what a tenant has.
+  database: ${NEO4J_DATABASE:}
+
+# The tenant's cache. No credential: it is reachable inside the tenant's own
+# vCluster and nowhere else. REDIS_* is the name the platform already injects.
+valkey:
+  host: ${REDIS_HOST:}
+  port: ${REDIS_PORT:6379}
+  key-prefix: ${REDIS_KEY_PREFIX:plumb:}
+
 # Replicated into the tenant vCluster. The namespace is the tenant id.
 temporal:
   address: ${TEMPORAL_ADDRESS:}
